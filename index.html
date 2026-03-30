@@ -402,7 +402,7 @@ function exportExcel(settings, records, ym) {
       : (rec?.startTime ? rec.startTime : "");
     const dateLeft = firstDay ? `${month} /` : "/";
     firstDay = false;
-    rows.push([dateLeft, d, route, timeStr, dist || ""]);
+    rows.push([dateLeft, d, route, timeStr, dist !== "" ? dist : ""]);
   });
 
   // フッター行
@@ -1341,18 +1341,15 @@ function App({ user, onLogout }) {
   // ── 保存（更新済み records を返す） ──────────
   const saveToday = () => {
     const { legDists, total } = routeData;
-    let saved = null;
-    setRecords(prev=>{
-      const cur = prev[date] || rec;
-      const newStops = cur.stops.map((s,i)=>({ ...s, distanceFromPrev: legDists[i]||0 }));
-      const returnDist = legDists[cur.stops.length] || 0;
-      const updated = { ...cur, stops:newStops, returnDistance:returnDist, totalDistance:total, saved:true };
-      saved = { ...prev, [date]:updated };
-      fsSet("records", saved);
-      return saved;
-    });
+    const cur = records[date] || rec;
+    const newStops = cur.stops.map((s,i)=>({ ...s, distanceFromPrev: legDists[i]||0 }));
+    const returnDist = legDists[cur.stops.length] || 0;
+    const updated = { ...cur, stops:newStops, returnDistance:returnDist, totalDistance:total, saved:true };
+    const saved = { ...records, [date]:updated };
+    setRecords(saved);
+    fsSet("records", saved);
     setSaveMsg("保存しました！"); setTimeout(()=>setSaveMsg(""),2500);
-    return saved; // Excel 出力用に同期的に返す
+    return saved; // Excel 出力用
   };
 
   const handleSaveSettings = ns => {
@@ -1620,7 +1617,7 @@ function App({ user, onLogout }) {
         <PreviewModal
           rec={rec} settings={settings} routeData={routeData} date={date}
           onSave={()=>{ saveToday(); setShowPreview(false); }}
-          onExcel={()=>{ const r=saveToday(); exportExcel(settings, r||records, date.slice(0,7)); setShowPreview(false); }}
+          onExcel={()=>{ const r=saveToday(); exportExcel(settings, r ?? records, date.slice(0,7)); setShowPreview(false); }}
           onClose={()=>setShowPreview(false)}
         />
       )}
