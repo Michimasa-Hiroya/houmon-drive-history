@@ -58,11 +58,28 @@
     order: 1;
   }
 
+  /* ── モバイルタブバー ── */
+  #mobile-tabs {
+    display: none;
+    flex-shrink: 0;
+    background: white;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  #mobile-tabs button {
+    flex: 1; padding: 10px 0; font-size: 13px; font-weight: 600;
+    border: none; background: none; cursor: pointer; color: #94a3b8;
+    border-bottom: 3px solid transparent; transition: all 0.15s;
+  }
+  #mobile-tabs button.active { color: #2563eb; border-bottom-color: #2563eb; }
+
   /* ── モバイル縦画面（768px以下） ── */
   @media (max-width: 768px) {
-    #app-layout { flex-direction: column; }
-    #map-container { flex: 0 0 52dvh; width: 100%; }
+    #mobile-tabs { display: flex; }
+    #app-layout { flex-direction: column; flex: 1 1 0; min-height: 0; }
+    #map-container { flex: 1 1 0; width: 100%; min-height: 0; }
+    #map-container.tab-hidden { display: none; }
     #sidebar { flex: 1 1 0; min-height: 0; width: 100%; }
+    #sidebar.tab-hidden { display: none; }
     .bottom-panel { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
   }
 
@@ -221,25 +238,13 @@ const WEEKDAYS = ["日","月","火","水","木","金","土"];
 const DEFAULT_BASE = {
   lat: 42.964859, lng: 144.411805,
   address: "北海道釧路市興津２－２１－１３",
-  districtName: "灯"
+  districtName: "訪問看護ステーション灯"
 };
 const DEFAULT_SETTINGS = {
   defaultBase: DEFAULT_BASE,
   staffName: "",
-  vehicleNumber: "",
   vehicleAllowanceRate: 40,
-  districtMappings: [
-    { pattern:"興津", districtName:"灯" },
-    { pattern:"貝塚", districtName:"貝塚" },
-    { pattern:"緑ヶ丘", districtName:"緑ヶ丘" },
-    { pattern:"大楽毛", districtName:"大楽毛" },
-    { pattern:"春採", districtName:"春採" },
-    { pattern:"鳥取", districtName:"鳥取" },
-    { pattern:"芦野", districtName:"芦野" },
-    { pattern:"文苑", districtName:"文苑" },
-    { pattern:"桜ヶ丘", districtName:"桜ヶ丘" },
-    { pattern:"松浦", districtName:"松浦" },
-  ]
+  districtMappings: []
 };
 
 // ── localStorage ──────────────────────────────
@@ -343,64 +348,114 @@ function makeIcon(label, color) {
 function exportExcel(settings, records, ym) {
   const [year, month] = ym.split("-").map(Number);
   const days = new Date(year, month, 0).getDate();
+  const stn = settings.defaultBase.districtName || "訪問看護ステーション灯";
+  const staff = settings.staffName || "";
+  const rate = settings.vehicleAllowanceRate || 40;
+
+  // 平日のみ収集
+  const weekdayDates = [];
+  for (let d = 1; d <= days; d++) {
+    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const wd = new Date(ds + "T00:00:00").getDay();
+    if (wd !== 0 && wd !== 6) weekdayDates.push({ d, ds });
+  }
+
+  // ── 行データ組み立て ──────────────────────────
+  // 列: A=月部分, B=日, C=行き先, D=時間, E=走行距離  (0-indexed: 0,1,2,3,4)
   const rows = [];
 
-  rows.push(["運転日報"]);
-  rows.push([`${year}年${month}月`]);
-  rows.push([`氏名: ${settings.staffName||"　　　　　"}`, "", "", "", "", "", "所長印", "", "□"]);
-  rows.push([`車両番号: ${settings.vehicleNumber||"　　　　　"}`]);
-  rows.push([]);
-  rows.push(["日付","曜日","行先","出勤","退勤","走行距離(km)"]);
+  // 行0: タイトル（A列に配置、C列にサブタイトル）
+  rows.push(["運　転　日　誌", "", `【 ${year} 年 ${month} 月 】`, "", ""]);
 
-  for (let d=1; d<=days; d++) {
-    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  // 行1: [決裁] ヘッダー
+  rows.push(["[決裁]", "", "", "事業所名", "運転者名"]);
+
+  // 行2: 所長+事業所名+運転者名
+  rows.push(["所長", "", "", stn, staff]);
+
+  // 行3: 空行（所長欄の高さ確保）
+  rows.push(["", "", "", "", ""]);
+
+  // 行4: 列ヘッダー
+  rows.push(["日付", "", "行　　き　　先", "時　　　　間", "走行距離"]);
+
+  // 行5〜: 平日データ
+  const dataStartRow = 5;
+  let firstDay = true;
+  weekdayDates.forEach(({ d, ds }) => {
     const rec = records[ds];
-    const wd = WEEKDAYS[new Date(ds+"T00:00:00").getDay()];
+    const startBase = rec?.base?.districtName || stn;
+    const endBase   = rec?.returnBase?.districtName || startBase;
     let route = "";
-    const startBase = rec?.base?.districtName || settings.defaultBase.districtName;
-    const endBase = rec?.returnBase?.districtName || startBase;
     if (rec?.stops?.length) {
-      const names = rec.stops.map(s => s.districtName || s.address.slice(0,8));
+      const names = rec.stops.map(s => s.districtName || s.address.slice(0, 8));
       route = [startBase, ...names, endBase].join("→");
-    } else if (startBase !== endBase) {
-      route = `${startBase}→${endBase}`;
+    } else if (rec?.startTime) {
+      route = startBase === endBase ? startBase : `${startBase}→${endBase}`;
     }
-    // totalDistanceが0/未保存の場合はlegDist合計で補完
     const dist = rec?.totalDistance > 0 ? rec.totalDistance
       : (rec?.stops?.length > 0
-          ? Math.round((rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0))*10)/10
+          ? Math.round((rec.stops.reduce((s, st) => s + (st.distanceFromPrev || 0), 0) + (rec.returnDistance || 0)) * 10) / 10
           : "");
-    rows.push([
-      `${month}/${d}`, wd, route,
-      rec?.startTime||"", rec?.endTime||"",
-      dist
-    ]);
-  }
+    const timeStr = (rec?.startTime && rec?.endTime)
+      ? `${rec.startTime} ～ ${rec.endTime}`
+      : (rec?.startTime ? rec.startTime : "");
+    const dateLeft = firstDay ? `${month} /` : "/";
+    firstDay = false;
+    rows.push([dateLeft, d, route, timeStr, dist || ""]);
+  });
 
-  rows.push([]);
-  const lastDataRow = 6 + days;
-  rows.push(["月間走行距離合計","","","","",{ f:`SUM(F7:F${lastDataRow})` }]);
-  rows.push([`車両手当（${settings.vehicleAllowanceRate}円/km）`,"","","","",
-    { f:`F${lastDataRow+2}*${settings.vehicleAllowanceRate}` }]);
+  // フッター行
+  const dataEndRow = dataStartRow + weekdayDates.length - 1; // 0-indexed最終データ行
+  const distColLetter = "E";
+  const sumFormula = `SUM(${distColLetter}${dataStartRow + 1}:${distColLetter}${dataEndRow + 1})`;
+  rows.push([
+    `＠${rate}円`, "×", `         km ＝`, "          円",
+    ""
+  ]);
+  rows.push(["", "", "", `走行距離月計→`, { f: sumFormula }]);
 
+  // ── SheetJS ────────────────────────────────────
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{wch:8},{wch:5},{wch:38},{wch:7},{wch:7},{wch:12}];
-  ws['!pageSetup'] = { paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 };
 
-  for (let d=1; d<=days; d++) {
-    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const wd = new Date(ds+"T00:00:00").getDay();
-    if (wd===0||wd===6) {
-      for (let c=0; c<6; c++) {
-        const cell = XLSX.utils.encode_cell({r:5+d, c});
-        if (ws[cell]) ws[cell].s = { fill:{fgColor:{rgb:"F1F5F9"}} };
-      }
-    }
-  }
+  // 列幅
+  ws["!cols"] = [
+    { wch: 6  }, // A: 月/
+    { wch: 4  }, // B: 日
+    { wch: 52 }, // C: 行き先
+    { wch: 16 }, // D: 時間
+    { wch: 10 }, // E: 距離
+  ];
+
+  // 行の高さ（ヘッダー部分を少し高く）
+  ws["!rows"] = [
+    { hpt: 28 }, // タイトル
+    { hpt: 16 }, // [決裁]
+    { hpt: 22 }, // 所長行
+    { hpt: 22 }, // 空行
+    { hpt: 20 }, // 列ヘッダー
+  ];
+
+  // セル結合
+  ws["!merges"] = [
+    // タイトル: A1〜B1
+    { s:{r:0,c:0}, e:{r:0,c:1} },
+    // 所長欄: A2〜A4 (縦結合)
+    { s:{r:1,c:0}, e:{r:3,c:0} },
+    // 所長欄右の空欄: B2〜B4
+    { s:{r:1,c:1}, e:{r:3,c:1} },
+    // 列ヘッダー 日付: A5〜B5
+    { s:{r:4,c:0}, e:{r:4,c:1} },
+    // データ行の日付列 A〜B を結合
+    ...weekdayDates.map((_, i) => ({ s:{r:dataStartRow+i,c:0}, e:{r:dataStartRow+i,c:1} })),
+  ];
+
+  // ページ設定（A4横）
+  ws["!pageSetup"] = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, `${year}年${month}月`);
-  XLSX.writeFile(wb, `運転日報_${year}年${String(month).padStart(2,'0')}月.xlsx`);
+  XLSX.writeFile(wb, `運転日誌_${year}年${String(month).padStart(2,'0')}月.xlsx`);
 }
 
 // ══════════════════════════════════════════════
@@ -411,14 +466,11 @@ function exportExcel(settings, records, ym) {
 function SettingsModal({ settings, onSave, onClose }) {
   const [f, setF] = useState({
     staffName: settings.staffName,
-    vehicleNumber: settings.vehicleNumber,
     baseAddress: settings.defaultBase.address,
     baseDistrict: settings.defaultBase.districtName,
     rate: settings.vehicleAllowanceRate,
-    mappings: settings.districtMappings.map(m=>({...m}))
   });
   const [busy, setBusy] = useState(false);
-  const [np, setNp] = useState(""); const [nd, setNd] = useState("");
 
   const save = async () => {
     setBusy(true);
@@ -428,14 +480,10 @@ function SettingsModal({ settings, onSave, onClose }) {
       if (!r) { alert("住所が見つかりません。確認してください。"); setBusy(false); return; }
       base = { lat:r.lat, lng:r.lng, address:f.baseAddress, districtName:f.baseDistrict };
     }
-    onSave({ ...settings, staffName:f.staffName, vehicleNumber:f.vehicleNumber,
-      vehicleAllowanceRate:Number(f.rate), defaultBase:base,
-      districtMappings:f.mappings.filter(m=>m.pattern&&m.districtName) });
+    onSave({ ...settings, staffName:f.staffName,
+      vehicleAllowanceRate:Number(f.rate), defaultBase:base });
     setBusy(false); onClose();
   };
-
-  const addMap = () => { if(np&&nd){ setF(v=>({...v,mappings:[...v.mappings,{pattern:np,districtName:nd}]})); setNp("");setNd(""); }};
-  const delMap = i => setF(v=>({...v,mappings:v.mappings.filter((_,j)=>j!==i)}));
 
   return (
     <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center p-4">
@@ -446,14 +494,11 @@ function SettingsModal({ settings, onSave, onClose }) {
             <button onClick={onClose} className="text-slate-400 text-2xl w-10 h-10 flex items-center justify-center hover:text-slate-600">×</button>
           </div>
 
-          {[["スタッフ名","staffName","山田 花子","text"],["車両番号","vehicleNumber","釧路 500 あ 1234","text"]].map(([label,key,ph,type])=>(
-            <div key={key} className="mb-4">
-              <label className="block text-sm font-medium text-slate-600 mb-1">{label}</label>
-              <input type={type} className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={f[key]} placeholder={ph} onChange={e=>setF(v=>({...v,[key]:e.target.value}))} />
-            </div>
-          ))}
-
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-600 mb-1">スタッフ名</label>
+            <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={f.staffName} placeholder="山田 花子" onChange={e=>setF(v=>({...v,staffName:e.target.value}))} />
+          </div>
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-600 mb-1">事業所住所</label>
             <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -462,32 +507,12 @@ function SettingsModal({ settings, onSave, onClose }) {
           <div className="mb-4">
             <label className="block text-sm font-medium text-slate-600 mb-1">事業所の地区名（Excel表示用）</label>
             <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={f.baseDistrict} placeholder="灯" onChange={e=>setF(v=>({...v,baseDistrict:e.target.value}))} />
+              value={f.baseDistrict} placeholder="訪問看護ステーション灯" onChange={e=>setF(v=>({...v,baseDistrict:e.target.value}))} />
           </div>
           <div className="mb-5">
             <label className="block text-sm font-medium text-slate-600 mb-1">車両手当（円/km）</label>
             <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={f.rate} onChange={e=>setF(v=>({...v,rate:e.target.value}))} />
-          </div>
-
-          <div className="border-t pt-4 mb-5">
-            <h3 className="font-semibold text-slate-700 mb-1">地区名 自動変換テーブル</h3>
-            <p className="text-xs text-slate-400 mb-3">住所にキーワードが含まれると地区名を自動補完します</p>
-            <div className="space-y-1.5 mb-3 max-h-40 overflow-y-auto">
-              {f.mappings.map((m,i)=>(
-                <div key={i} className="flex items-center gap-2">
-                  <span className="flex-1 text-sm bg-blue-50 text-blue-700 px-2 py-1 rounded-lg">{m.pattern} → {m.districtName}</span>
-                  <button onClick={()=>delMap(i)} className="w-9 h-9 flex items-center justify-center text-red-400 hover:text-red-600 text-lg">×</button>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="キーワード" value={np} onChange={e=>setNp(e.target.value)} />
-              <input className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="地区名" value={nd} onChange={e=>setNd(e.target.value)} />
-              <button onClick={addMap} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">追加</button>
-            </div>
           </div>
 
           <div className="flex gap-3 pt-4 border-t">
@@ -983,16 +1008,19 @@ function BaseModal({ mode, current, favorites, onSave, onClose }) {
 // メインアプリ
 // ══════════════════════════════════════════════
 function App({ user, onLogout }) {
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [records, setRecords] = useState({});
-  const [favorites, setFavorites] = useState([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
+  // ユーザーごとのキャッシュキー
+  const cacheKey = k => user.isGuest ? `vndr_${k}` : `vndr_${k}_${user.uid}`;
+  const [settings, setSettings] = useState(() => ({ ...DEFAULT_SETTINGS, ...ls.get(cacheKey("settings"), {}) }));
+  const [records,  setRecords]  = useState(() => ls.get(cacheKey("records"),  {}));
+  const [favorites,setFavorites]= useState(() => ls.get(cacheKey("favorites"),[]));
+  const [dataLoaded, setDataLoaded] = useState(true); // キャッシュで即時表示
   const userDocRef = useRef(null);
   const [date, setDate] = useState(todayStr);
   const [showSettings, setShowSettings] = useState(false);
   const [showFavs, setShowFavs] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showPattern, setShowPattern] = useState(false);
+  const [mobileTab, setMobileTab] = useState("list"); // "map" | "list"
   const [showBaseEdit, setShowBaseEdit] = useState(null);
   const [mapMode, setMapMode] = useState("stop");
   const [favToast, setFavToast] = useState(null);
@@ -1009,6 +1037,7 @@ function App({ user, onLogout }) {
   const markersRef = useRef([]);
   const routeLineRef = useRef(null);
   const distMarkersRef = useRef([]);
+  const pendingMarkerRef = useRef(null); // 長押し時の仮ピン
   const settingsRef = useRef(settings);
   const recRef = useRef(null);
   const updateRecRef = useRef(null);
@@ -1043,45 +1072,49 @@ function App({ user, onLogout }) {
   }, [date]);
   useEffect(()=>{ updateRecRef.current = updateRec; }, [updateRec]);
 
-  // ── データ読み込み（ゲスト=localStorage / ログイン=Firestore） ──
+  // ── Firestoreからバックグラウンドで最新データを取得・キャッシュ更新 ──
   useEffect(() => {
-    if (user.isGuest) {
-      // ゲスト：localStorageから読む
-      setSettings(s => ({ ...DEFAULT_SETTINGS, ...ls.get("vndr_settings", {}) }));
-      setRecords(ls.get("vndr_records", {}));
-      setFavorites(ls.get("vndr_favorites", []));
-      setDataLoaded(true);
-      return;
-    }
+    if (user.isGuest) return;
     const db = firebase.firestore();
     const ref = db.collection("users").doc(user.uid);
     userDocRef.current = ref;
     ref.get().then(doc => {
-      if (doc.exists) {
-        const data = doc.data();
-        if (data.settings)  setSettings(() => ({ ...DEFAULT_SETTINGS, ...data.settings }));
-        if (data.records)   setRecords(data.records);
-        if (data.favorites) setFavorites(data.favorites);
-      }
-      setDataLoaded(true);
-    }).catch(() => setDataLoaded(true));
+      if (!doc.exists) return;
+      const data = doc.data();
+      if (data.settings)  { setSettings({ ...DEFAULT_SETTINGS, ...data.settings }); ls.set(cacheKey("settings"), data.settings); }
+      if (data.records)   { setRecords(data.records);   ls.set(cacheKey("records"),   data.records); }
+      if (data.favorites) { setFavorites(data.favorites); ls.set(cacheKey("favorites"), data.favorites); }
+    }).catch(err => console.warn("Firestore読み込みエラー:", err));
   }, [user.uid]);
 
   const fsSet = useCallback((field, value) => {
-    if (user.isGuest) { ls.set("vndr_" + field, value); return; }
-    userDocRef.current?.set({ [field]: value }, { merge: true });
-  }, [user.isGuest]);
+    ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
+    if (user.isGuest) return;
+    userDocRef.current?.set({ [field]: value }, { merge: true })
+      .catch(err => console.warn("Firestore保存エラー:", err));
+  }, [user.isGuest, user.uid]);
 
   // ── 地図初期化（一度だけ） ────────────────
   useEffect(()=>{
     const b = settings.defaultBase;
+    // 釧路市・釧路町の範囲に制限
+    const KUSHIRO_BOUNDS = L.latLngBounds(
+      L.latLng(42.65, 143.95), // 南西
+      L.latLng(43.25, 144.80)  // 北東
+    );
     const map = L.map(mapContainerRef.current, {
       center:[b.lat, b.lng], zoom:13,
-      zoomControl:true, tap:false,  // tap:false でLeafletのタップ処理を無効化（長押し独自実装）
-      contextmenu: false
+      zoomControl:true, tap:false,
+      contextmenu: false,
+      maxBounds: KUSHIRO_BOUNDS,
+      maxBoundsViscosity: 1.0, // 範囲外に引っ張れないよう固定
+      minZoom: 11,             // 釧路全体が見える程度までしか縮小できない
+      maxZoom: 18
     });
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution:'© OpenStreetMap contributors', maxZoom:19
+      attribution:'© OpenStreetMap contributors',
+      maxZoom: 18,
+      bounds: KUSHIRO_BOUNDS   // 範囲外のタイルは読み込まない
     }).addTo(map);
     mapRef.current = map;
 
@@ -1151,11 +1184,18 @@ function App({ user, onLogout }) {
   const handleMapClickRef = useRef(null);
   const handleMapClick = useCallback(async e=>{
     const { lat, lng } = e.latlng;
+    // 仮ピンを地図上に立てる
+    if (pendingMarkerRef.current) { pendingMarkerRef.current.remove(); }
+    if (mapRef.current) {
+      const icon = L.divIcon({
+        className:"", iconSize:[32,32], iconAnchor:[16,32],
+        html:`<div style="width:32px;height:32px;background:#f59e0b;border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,0.4)"><span style="display:block;transform:rotate(45deg);text-align:center;line-height:26px;font-weight:bold;font-size:14px;color:white">?</span></div>`
+      });
+      pendingMarkerRef.current = L.marker([lat,lng],{icon,zIndexOffset:1000}).addTo(mapRef.current);
+    }
     const address = await reverseGeocode(lat, lng);
     const suggested = autoDistrict(address, settingsRef.current.districtMappings);
-
     const curMode = mapModeRef.current;
-    // 訪問先と同じように、まずは常に DistrictModal を開くようにする
     setDistModal({ lat, lng, address, suggested: suggested || extractDistrictFromAddress(address), mode: curMode });
   }, []);
   useEffect(()=>{ handleMapClickRef.current = handleMapClick; }, [handleMapClick]);
@@ -1240,7 +1280,11 @@ function App({ user, onLogout }) {
 
 
   // ── ピン確定 ─────────────────────────────
+  const removePendingMarker = () => {
+    if (pendingMarkerRef.current) { pendingMarkerRef.current.remove(); pendingMarkerRef.current = null; }
+  };
   const confirmDistrict = (name, saveToFav, memo) => {
+    removePendingMarker();
     const { lat, lng, address, mode } = distModal;
     setDistModal(null);
     const newStop = { lat, lng, address, districtName: name };
@@ -1272,7 +1316,10 @@ function App({ user, onLogout }) {
   };
   useEffect(()=>{ addFavRef.current = addFav; }); // eslint-disable-line
   const addFromFav = fav => { setShowFavs(false); updateRec(r=>{ if(r.stops.length>=10){alert("最大10件");return r;} return{...r,stops:[...r.stops,{...fav}]}; }); };
-  const delFav = i => { const nf=favorites.filter((_,j)=>j!==i); setFavorites(nf); fsSet("favorites",nf); };
+  const delFav = i => {
+    if (!confirm(`「${favorites[i]?.districtName}」をお気に入りから削除しますか？`)) return;
+    const nf=favorites.filter((_,j)=>j!==i); setFavorites(nf); fsSet("favorites",nf);
+  };
 
   const handleSearchResult = ({ lat, lng, address, suggested }) => {
     setDistModal({ lat, lng, address, suggested });
@@ -1396,11 +1443,21 @@ function App({ user, onLogout }) {
         </div>
       </header>
 
+      {/* ── モバイルタブバー ── */}
+      <div id="mobile-tabs">
+        <button className={mobileTab==="list" ? "active" : ""} onClick={()=>setMobileTab("list")}>
+          📋 訪問先
+        </button>
+        <button className={mobileTab==="map" ? "active" : ""} onClick={()=>{ setMobileTab("map"); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}>
+          🗺️ 地図
+        </button>
+      </div>
+
       {/* ── メインレイアウト ── */}
       <div id="app-layout">
 
         {/* 地図 */}
-        <div id="map-container">
+        <div id="map-container" className={mobileTab==="list" ? "tab-hidden" : ""}>
           <div ref={mapContainerRef} id="map" />
 
           {/* 長押しリップル */}
@@ -1438,7 +1495,7 @@ function App({ user, onLogout }) {
         </div>
 
         {/* サイドバー */}
-        <div id="sidebar">
+        <div id="sidebar" className={mobileTab==="map" ? "tab-hidden" : ""}>
           {/* 検索バー */}
           <div className="px-3 pt-2.5 pb-2 border-b border-slate-100">
             <SearchBar onResult={handleSearchResult} mappings={settings.districtMappings} />
@@ -1557,7 +1614,7 @@ function App({ user, onLogout }) {
       {showPattern && <PatternModal records={records} date={date} onApply={handleApplyPattern} onClose={()=>setShowPattern(false)} />}
       {showSettings && <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setShowSettings(false)} />}
       {showBaseEdit && <BaseModal mode={showBaseEdit} current={showBaseEdit==="start" ? rec.base : rec.returnBase} favorites={favorites} onSave={handleBaseChange} onClose={()=>setShowBaseEdit(null)} />}
-      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>setDistModal(null)} />}
+      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); }} />}
       {showFavs && <FavoritesModal favorites={favorites} onSelect={addFromFav} onDelete={delFav} onClose={()=>setShowFavs(false)} />}
       {showPreview && (
         <PreviewModal
@@ -1594,9 +1651,20 @@ function AuthWrapper() {
   const [isGuest, setIsGuest] = useState(false);
 
   useEffect(() => {
-    firebase.auth().getRedirectResult().catch(() => {});
-    const unsubscribe = firebase.auth().onAuthStateChanged(u => setFirebaseUser(u ?? null));
-    return () => unsubscribe();
+    // 3秒以内に onAuthStateChanged が来なければ強制的にログイン画面へ
+    const timeout = setTimeout(() => setFirebaseUser(prev => prev === undefined ? null : prev), 3000);
+    let unsubscribe = () => {};
+    try {
+      firebase.auth().getRedirectResult().catch(() => {});
+      unsubscribe = firebase.auth().onAuthStateChanged(u => {
+        clearTimeout(timeout);
+        setFirebaseUser(u ?? null);
+      });
+    } catch(e) {
+      clearTimeout(timeout);
+      setFirebaseUser(null);
+    }
+    return () => { clearTimeout(timeout); unsubscribe(); };
   }, []);
 
   const handleLogout = async () => {
@@ -1604,11 +1672,9 @@ function AuthWrapper() {
     await firebase.auth().signOut();
   };
 
-  // ゲストモードは Firebase の状態と完全に独立
   if (isGuest) {
     return <App user={GUEST_USER} onLogout={() => setIsGuest(false)} />;
   }
-
   if (firebaseUser === undefined) {
     return (
       <div className="fixed inset-0 bg-blue-700 flex items-center justify-center">
