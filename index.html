@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>訪問看護 運転日報</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; font-family: 'Noto Sans JP', sans-serif; }
+
+  /* ── 高さ伝搬の基盤（dvh対応でAndroid安全） ── */
+  html, body {
+    height: 100%; height: 100dvh;
+    margin: 0; padding: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    background: #f1f5f9;
+  }
+  #root {
+    height: 100%; height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── 地図 ── */
+  #map { width: 100%; height: 100%; cursor: crosshair; }
+  .leaflet-container { background: #dbeafe; font-family: 'Noto Sans JP', sans-serif; }
+  .leaflet-popup-content { margin: 8px 12px; font-size: 13px; }
+  .leaflet-control-zoom { border-radius: 10px !important; overflow: hidden; }
+
+  /* ── メインレイアウト（PC横並び） ── */
+  #app-layout {
+    display: flex;
+    flex-direction: row;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  #map-container {
+    flex: 0 0 55%;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    order: 2;
+    isolation: isolate;
+  }
+  #sidebar {
+    flex: 0 0 45%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    overflow: hidden;
+    border-right: 1px solid #e2e8f0;
+    order: 1;
+  }
+
+  /* ── モバイル縦画面（768px以下） ── */
+  @media (max-width: 768px) {
+    #app-layout { flex-direction: column; }
+    #map-container { flex: 0 0 52dvh; width: 100%; }
+    #sidebar { flex: 1 1 0; min-height: 0; width: 100%; }
+    .bottom-panel { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  }
+
+  /* ── スクロールバー ── */
+  .sidebar-scroll { overflow-y: auto; touch-action: pan-y; }
+  .sidebar-scroll::-webkit-scrollbar { width: 3px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+
+  /* ── アニメーション ── */
+  .modal-backdrop { animation: fadeIn 0.15s ease; }
+  .modal-card     { animation: slideUp 0.18s ease; }
+  @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slideUp { from { transform: translateY(16px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+
+  /* ── ドラッグ ── */
+  .stop-item { transition: background 0.12s; cursor: grab; }
+  .stop-item:active { cursor: grabbing; }
+  .stop-item.drag-over { border-top: 2px solid #2563EB !important; }
+
+  /* ── 長押しリップル ── */
+  @keyframes ripple {
+    0%   { transform: translate(-50%,-50%) scale(0); opacity: 0.6; }
+    100% { transform: translate(-50%,-50%) scale(3); opacity: 0; }
+  }
+  .press-ripple {
+    position: absolute; pointer-events: none; z-index: 25;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(37,99,235,0.35);
+    animation: ripple 0.6s ease forwards;
+  }
+
+  /* ── 日付インプット非表示（ラベルで制御） ── */
+  input[type="date"].date-hidden {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    width: 100%; height: 100%;
+  }
+
+  /* ── 確認プレビューテーブル ── */
+  .preview-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .preview-table th, .preview-table td {
+    border: 1px solid #e2e8f0; padding: 7px 10px; text-align: left;
+  }
+  .preview-table th { background: #f8fafc; font-weight: 600; color: #475569; }
+  .preview-table .total-row td { font-weight: 700; background: #eff6ff; color: #1d4ed8; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+
+<!-- Firebase compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+  firebase.initializeApp({
+    apiKey: "AIzaSyCDHORJ2nQGwjpgk1V87-QDeOoUABwXA6c",
+    authDomain: "houmon-drive-history.firebaseapp.com",
+    projectId: "houmon-drive-history",
+    storageBucket: "houmon-drive-history.firebasestorage.app",
+    messagingSenderId: "883547755115",
+    appId: "1:883547755115:web:dd5f3eba644a32bab5572e"
+  });
+</script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ── Googleログイン画面 ──────────────────────────
+const GUEST_USER = { uid: "guest", displayName: "ゲスト", isGuest: true };
+
+function LoginScreen({ onGuest }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleLogin = async () => {
+    setLoading(true);
+    setError("");
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try {
+      // まずポップアップを試みる
+      await firebase.auth().signInWithPopup(provider);
+    } catch (e) {
+      if (e.code === "auth/popup-blocked" || e.code === "auth/popup-closed-by-user") {
+        // ポップアップがブロックされたらリダイレクト方式にフォールバック
+        try {
+          await firebase.auth().signInWithRedirect(provider);
+        } catch (e2) {
+          setError("ログインに失敗しました（" + (e2.code || e2.message) + "）");
+          setLoading(false);
+        }
+      } else if (e.code === "auth/operation-not-supported-in-this-environment") {
+        setError("ファイルを直接開いているためGoogleログインが使えません。下の「ログインせずに使う」ボタンからお試しください。サーバーで開くと解決します。");
+        setLoading(false);
+      } else if (e.code === "auth/unauthorized-domain") {
+        setError("このページのURLがFirebaseに登録されていません。Firebaseコンソール → Authentication → 承認済みドメインにURLを追加してください。");
+        setLoading(false);
+      } else {
+        setError("ログインに失敗しました（" + (e.code || e.message) + "）");
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-blue-700 to-blue-900 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm text-center">
+        <div className="text-4xl mb-3">🚗</div>
+        <h1 className="text-xl font-bold text-slate-800 mb-1">訪問看護 運転日報</h1>
+        <p className="text-sm text-slate-500 mb-6">Googleアカウントでログインするとデータが保存・同期されます</p>
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3 mb-4 text-left">
+            <p className="text-red-600 text-xs leading-relaxed">{error}</p>
+          </div>
+        )}
+        {/* Googleログインボタン */}
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-3 border border-slate-300 rounded-xl px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 transition-colors mb-3"
+        >
+          <svg width="18" height="18" viewBox="0 0 48 48">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            <path fill="none" d="M0 0h48v48H0z"/>
+          </svg>
+          {loading ? "ログイン中…" : "Googleでログイン"}
+        </button>
+        {/* 区切り線 */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="flex-1 h-px bg-slate-200"></div>
+          <span className="text-xs text-slate-400">または</span>
+          <div className="flex-1 h-px bg-slate-200"></div>
+        </div>
+        {/* ゲストボタン */}
+        <button
+          onClick={onGuest}
+          className="w-full px-4 py-3 rounded-xl text-sm font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition-colors"
+        >
+          ログインせずに使う（データはこの端末のみ）
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── 定数 ──────────────────────────────────────
+const WEEKDAYS = ["日","月","火","水","木","金","土"];
+const DEFAULT_BASE = {
+  lat: 42.964859, lng: 144.411805,
+  address: "北海道釧路市興津２－２１－１３",
+  districtName: "灯"
+};
+const DEFAULT_SETTINGS = {
+  defaultBase: DEFAULT_BASE,
+  staffName: "",
+  vehicleNumber: "",
+  vehicleAllowanceRate: 40,
+  districtMappings: [
+    { pattern:"興津", districtName:"灯" },
+    { pattern:"貝塚", districtName:"貝塚" },
+    { pattern:"緑ヶ丘", districtName:"緑ヶ丘" },
+    { pattern:"大楽毛", districtName:"大楽毛" },
+    { pattern:"春採", districtName:"春採" },
+    { pattern:"鳥取", districtName:"鳥取" },
+    { pattern:"芦野", districtName:"芦野" },
+    { pattern:"文苑", districtName:"文苑" },
+    { pattern:"桜ヶ丘", districtName:"桜ヶ丘" },
+    { pattern:"松浦", districtName:"松浦" },
+  ]
+};
+
+// ── localStorage ──────────────────────────────
+const ls = {
+  get: (k, d) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
+};
+
+// ── 日付ユーティリティ ──────────────────────
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
+const dateLabel = str => {
+  const d = new Date(str+"T00:00:00");
+  return `${d.getMonth()+1}/${d.getDate()}(${WEEKDAYS[d.getDay()]})`;
+};
+const addDays = (str, n) => {
+  const d = new Date(str+"T00:00:00");
+  d.setDate(d.getDate()+n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+};
+const ymLabel = str => { const [y,m]=str.split("-"); return `${y}年${Number(m)}月`; };
+
+// ── 地区名自動変換 ──────────────────────────
+// Nominatim の先頭コンポーネント「桜ケ岡七丁目」→「桜ケ岡」のように抽出
+const extractDistrictFromAddress = address => {
+  const first = address.split(",")[0].trim();
+  // 「七丁目」「1番地」「2号」など 丁目/番地/号 とその前の数字を除去
+  const stripped = first
+    .replace(/[一二三四五六七八九十百千\d０-９]+[丁目番地号条丁]+.*$/, "")
+    .replace(/[ー－\-]\d+.*$/, "")  // 「興津２－２１」→「興津」
+    .trim();
+  return stripped || first;
+};
+
+const autoDistrict = (address, mappings) => {
+  for (const m of mappings) if (address.includes(m.pattern)) return m.districtName;
+  // マッピング未登録でも住所から地区名を自動推定
+  return extractDistrictFromAddress(address);
+};
+
+// ── Nominatim 逆ジオコーディング ────────────
+async function reverseGeocode(lat, lng) {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ja`,
+      { headers: { "User-Agent": "VNDrivingLog/1.0" } }
+    );
+    const d = await res.json();
+    return d.display_name || "不明な住所";
+  } catch { return "住所取得失敗"; }
+}
+
+// ── Nominatim 検索 ────────────────────────
+async function searchAddress(q) {
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&accept-language=ja&countrycodes=jp&limit=5`,
+    { headers: { "User-Agent": "VNDrivingLog/1.0" } }
+  );
+  return await res.json();
+}
+
+// ── Nominatim ジオコーディング ─────────────
+async function geocodeAddress(addr) {
+  const r = await searchAddress(addr);
+  if (!r.length) return null;
+  return { lat: parseFloat(r[0].lat), lng: parseFloat(r[0].lon) };
+}
+
+// ── OSRM 経路計算 ─────────────────────────
+async function fetchRoute(waypoints) {
+  const coords = waypoints.map(p => `${p.lng},${p.lat}`).join(";");
+  const res = await fetch(
+    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!res.ok) throw new Error(`OSRM ${res.status}`);
+  const d = await res.json();
+  if (!d.routes?.length) throw new Error("経路なし");
+  const route = d.routes[0];
+  return {
+    legDistances: route.legs.map(l => Math.round(l.distance/100)/10),
+    totalDistance: Math.round(route.distance/100)/10,
+    geometry: route.geometry
+  };
+}
+
+// ── カスタムマーカーアイコン ───────────────
+function makeIcon(label, color) {
+  const fs = label.length > 1 ? 9 : 12;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="40" viewBox="0 0 30 40">
+    <path d="M15 0C6.7 0 0 6.7 0 15c0 9.4 15 25 15 25S30 24.4 30 15C30 6.7 23.3 0 15 0z" fill="${color}" stroke="white" stroke-width="1.5"/>
+    <circle cx="15" cy="15" r="8" fill="white"/>
+    <text x="15" y="${fs===9?19:19}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="${color}" font-family="sans-serif">${label}</text>
+  </svg>`;
+  return L.divIcon({ html:svg, className:"", iconSize:[30,40], iconAnchor:[15,40], popupAnchor:[0,-40] });
+}
+
+// ── Excel 出力 ──────────────────────────────
+function exportExcel(settings, records, ym) {
+  const [year, month] = ym.split("-").map(Number);
+  const days = new Date(year, month, 0).getDate();
+  const rows = [];
+
+  rows.push(["運転日報"]);
+  rows.push([`${year}年${month}月`]);
+  rows.push([`氏名: ${settings.staffName||"　　　　　"}`, "", "", "", "", "", "所長印", "", "□"]);
+  rows.push([`車両番号: ${settings.vehicleNumber||"　　　　　"}`]);
+  rows.push([]);
+  rows.push(["日付","曜日","行先","出勤","退勤","走行距離(km)"]);
+
+  for (let d=1; d<=days; d++) {
+    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const rec = records[ds];
+    const wd = WEEKDAYS[new Date(ds+"T00:00:00").getDay()];
+    let route = "";
+    const startBase = rec?.base?.districtName || settings.defaultBase.districtName;
+    const endBase = rec?.returnBase?.districtName || startBase;
+    if (rec?.stops?.length) {
+      const names = rec.stops.map(s => s.districtName || s.address.slice(0,8));
+      route = [startBase, ...names, endBase].join("→");
+    } else if (startBase !== endBase) {
+      route = `${startBase}→${endBase}`;
+    }
+    // totalDistanceが0/未保存の場合はlegDist合計で補完
+    const dist = rec?.totalDistance > 0 ? rec.totalDistance
+      : (rec?.stops?.length > 0
+          ? Math.round((rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0))*10)/10
+          : "");
+    rows.push([
+      `${month}/${d}`, wd, route,
+      rec?.startTime||"", rec?.endTime||"",
+      dist
+    ]);
+  }
+
+  rows.push([]);
+  const lastDataRow = 6 + days;
+  rows.push(["月間走行距離合計","","","","",{ f:`SUM(F7:F${lastDataRow})` }]);
+  rows.push([`車両手当（${settings.vehicleAllowanceRate}円/km）`,"","","","",
+    { f:`F${lastDataRow+2}*${settings.vehicleAllowanceRate}` }]);
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:8},{wch:5},{wch:38},{wch:7},{wch:7},{wch:12}];
+  ws['!pageSetup'] = { paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 };
+
+  for (let d=1; d<=days; d++) {
+    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const wd = new Date(ds+"T00:00:00").getDay();
+    if (wd===0||wd===6) {
+      for (let c=0; c<6; c++) {
+        const cell = XLSX.utils.encode_cell({r:5+d, c});
+        if (ws[cell]) ws[cell].s = { fill:{fgColor:{rgb:"F1F5F9"}} };
+      }
+    }
+  }
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `${year}年${month}月`);
+  XLSX.writeFile(wb, `運転日報_${year}年${String(month).padStart(2,'0')}月.xlsx`);
+}
+
+// ══════════════════════════════════════════════
+// コンポーネント群
+// ══════════════════════════════════════════════
+
+// ── 設定モーダル ──────────────────────────────
+function SettingsModal({ settings, onSave, onClose }) {
+  const [f, setF] = useState({
+    staffName: settings.staffName,
+    vehicleNumber: settings.vehicleNumber,
+    baseAddress: settings.defaultBase.address,
+    baseDistrict: settings.defaultBase.districtName,
+    rate: settings.vehicleAllowanceRate,
+    mappings: settings.districtMappings.map(m=>({...m}))
+  });
+  const [busy, setBusy] = useState(false);
+  const [np, setNp] = useState(""); const [nd, setNd] = useState("");
+
+  const save = async () => {
+    setBusy(true);
+    let base = { ...settings.defaultBase, districtName: f.baseDistrict };
+    if (f.baseAddress !== settings.defaultBase.address) {
+      const r = await geocodeAddress(f.baseAddress);
+      if (!r) { alert("住所が見つかりません。確認してください。"); setBusy(false); return; }
+      base = { lat:r.lat, lng:r.lng, address:f.baseAddress, districtName:f.baseDistrict };
+    }
+    onSave({ ...settings, staffName:f.staffName, vehicleNumber:f.vehicleNumber,
+      vehicleAllowanceRate:Number(f.rate), defaultBase:base,
+      districtMappings:f.mappings.filter(m=>m.pattern&&m.districtName) });
+    setBusy(false); onClose();
+  };
+
+  const addMap = () => { if(np&&nd){ setF(v=>({...v,mappings:[...v.mappings,{pattern:np,districtName:nd}]})); setNp("");setNd(""); }};
+  const delMap = i => setF(v=>({...v,mappings:v.mappings.filter((_,j)=>j!==i)}));
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center p-4">
+      <div className="modal-card bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-xl font-bold text-slate-800">設定</h2>
+            <button onClick={onClose} className="text-slate-400 text-2xl w-10 h-10 flex items-center justify-center hover:text-slate-600">×</button>
+          </div>
+
+          {[["スタッフ名","staffName","山田 花子","text"],["車両番号","vehicleNumber","釧路 500 あ 1234","text"]].map(([label,key,ph,type])=>(
+            <div key={key} className="mb-4">
+              <label className="block text-sm font-medium text-slate-600 mb-1">{label}</label>
+              <input type={type} className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={f[key]} placeholder={ph} onChange={e=>setF(v=>({...v,[key]:e.target.value}))} />
+            </div>
+          ))}
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-600 mb-1">事業所住所</label>
+            <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={f.baseAddress} onChange={e=>setF(v=>({...v,baseAddress:e.target.value}))} />
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-600 mb-1">事業所の地区名（Excel表示用）</label>
+            <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={f.baseDistrict} placeholder="灯" onChange={e=>setF(v=>({...v,baseDistrict:e.target.value}))} />
+          </div>
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-slate-600 mb-1">車両手当（円/km）</label>
+            <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={f.rate} onChange={e=>setF(v=>({...v,rate:e.target.value}))} />
+          </div>
+
+          <div className="border-t pt-4 mb-5">
+            <h3 className="font-semibold text-slate-700 mb-1">地区名 自動変換テーブル</h3>
+            <p className="text-xs text-slate-400 mb-3">住所にキーワードが含まれると地区名を自動補完します</p>
+            <div className="space-y-1.5 mb-3 max-h-40 overflow-y-auto">
+              {f.mappings.map((m,i)=>(
+                <div key={i} className="flex items-center gap-2">
+                  <span className="flex-1 text-sm bg-blue-50 text-blue-700 px-2 py-1 rounded-lg">{m.pattern} → {m.districtName}</span>
+                  <button onClick={()=>delMap(i)} className="w-9 h-9 flex items-center justify-center text-red-400 hover:text-red-600 text-lg">×</button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="キーワード" value={np} onChange={e=>setNp(e.target.value)} />
+              <input className="flex-1 border border-slate-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                placeholder="地区名" value={nd} onChange={e=>setNd(e.target.value)} />
+              <button onClick={addMap} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-blue-700">追加</button>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-4 border-t">
+            <button onClick={onClose} className="flex-1 border border-slate-300 rounded-xl py-3 font-medium text-slate-600">キャンセル</button>
+            <button onClick={save} disabled={busy} className="flex-1 bg-blue-600 text-white rounded-xl py-3 font-bold disabled:opacity-50">
+              {busy?"処理中...":"保存"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 地区名入力モーダル ────────────────────────
+function DistrictModal({ address, suggested, onConfirm, onCancel }) {
+  const [name, setName] = useState(suggested||"");
+  const [doFav, setDoFav] = useState(false);
+  const [memo, setMemo] = useState("");
+  const ref = useRef();
+  useEffect(()=>{ setTimeout(()=>ref.current?.focus(), 150); },[]);
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-sm p-5">
+        <h3 className="font-bold text-slate-800 mb-1 text-lg">訪問先の地区名</h3>
+        <p className="text-xs text-slate-400 mb-3 break-all line-clamp-2">{address}</p>
+        <input ref={ref}
+          className="w-full border-2 border-blue-400 rounded-xl px-4 py-3 text-lg font-medium focus:outline-none focus:border-blue-600 mb-3"
+          value={name} placeholder="例: 貝塚"
+          onChange={e=>setName(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"&&name) onConfirm(name, doFav, memo); }} />
+          
+        <div className="bg-slate-50 p-3 rounded-xl mb-4 border border-slate-200">
+          <label className="flex items-center gap-2 mb-2 cursor-pointer select-none">
+            <input type="checkbox" checked={doFav} onChange={e=>setDoFav(e.target.checked)}
+              className="w-4.5 h-4.5 accent-yellow-400" />
+            <span className="text-sm font-bold text-slate-700">☆ お気に入りにも登録する</span>
+          </label>
+          <div className="flex items-center gap-2 pl-6">
+            <span className="text-xs text-slate-500 whitespace-nowrap">メモ:</span>
+            <input
+              className={`flex-1 border ${doFav?'border-yellow-400 bg-white':'border-slate-300 bg-slate-100 opacity-60'} rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400`}
+              value={memo} onChange={e=>setMemo(e.target.value)}
+              placeholder="例: Aさん宅、駐車場あり"
+              disabled={!doFav}
+              onKeyDown={e=>{ if(e.key==="Enter"&&name) onConfirm(name, doFav, memo); }} />
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 border border-slate-300 rounded-xl py-3 font-medium text-slate-600">キャンセル</button>
+          <button onClick={()=>name&&onConfirm(name, doFav, memo)} disabled={!name}
+            className="flex-1 bg-blue-600 text-white rounded-xl py-3 font-bold disabled:opacity-40">確定</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── お気に入りモーダル ────────────────────────
+function FavoritesModal({ favorites, onSelect, onDelete, onClose }) {
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-slate-800 text-lg">お気に入り</h3>
+          <button onClick={onClose} className="text-slate-400 text-2xl w-10 h-10 flex items-center justify-center">×</button>
+        </div>
+        {favorites.length===0 ? (
+          <p className="text-slate-500 text-sm mb-4">まだ登録されていません。<br/>リストの ☆ ボタンで登録できます。</p>
+        ) : (
+          <div className="space-y-2 max-h-72 overflow-y-auto mb-4">
+            {favorites.map((fav,i)=>(
+              <div key={i} className="flex items-center gap-2 bg-slate-50 rounded-xl p-3">
+                <button onClick={()=>onSelect(fav)} className="flex-1 text-left min-w-0">
+                  <div className="font-semibold text-blue-700">{fav.districtName}</div>
+                  {fav.memo && <div className="text-xs text-yellow-600 font-medium truncate">📝 {fav.memo}</div>}
+                  <div className="text-xs text-slate-400 truncate">{fav.address}</div>
+                </button>
+                <button onClick={()=>onDelete(i)} className="text-slate-300 hover:text-red-500 text-xl w-10 h-10 flex items-center justify-center">🗑</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} className="w-full border border-slate-300 rounded-xl py-3 font-medium text-slate-600">閉じる</button>
+      </div>
+    </div>
+  );
+}
+
+// ── 月次パターン反映モーダル ─────────────────
+function PatternModal({ records, date, onApply, onClose }) {
+  const [year, month] = date.split("-").map(Number);
+  const ym = `${year}-${String(month).padStart(2,'0')}`;
+  const WDAY_NAMES = { 1:"月", 2:"火", 3:"水", 4:"木", 5:"金" };
+
+  // 月内の全日付を列挙
+  const datesInMonth = [];
+  for (let d = new Date(year, month-1, 1); d.getMonth() === month-1; d.setDate(d.getDate()+1)) {
+    datesInMonth.push(`${year}-${String(month).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  }
+
+  // 各曜日の「初回」と「2回目以降」を分類
+  const firstOf = {};   // wday -> dateStr
+  const laterOf = {};   // wday -> [dateStr, ...]
+  for (const ds of datesInMonth) {
+    const wd = new Date(ds + "T00:00:00").getDay();
+    if (wd === 0 || wd === 6) continue;
+    if (!firstOf[wd]) { firstOf[wd] = ds; laterOf[wd] = []; }
+    else laterOf[wd].push(ds);
+  }
+
+  // テンプレートになれる曜日（初回に stops がある）
+  const patterns = Object.keys(firstOf).map(Number).filter(wd => {
+    const r = records[firstOf[wd]];
+    return r?.stops?.length > 0;
+  });
+
+  // チェックボックス状態
+  const [checked, setChecked] = React.useState(() =>
+    Object.fromEntries(patterns.map(wd => [wd, true]))
+  );
+  const toggle = wd => setChecked(prev => ({ ...prev, [wd]: !prev[wd] }));
+
+  // 上書き対象（既にデータがある日）
+  const overwriteDates = patterns.flatMap(wd =>
+    checked[wd] ? laterOf[wd].filter(ds => records[ds]?.stops?.length > 0) : []
+  );
+
+  const handleApply = () => {
+    const toApply = patterns.filter(wd => checked[wd]);
+    if (toApply.length === 0) { onClose(); return; }
+    onApply(toApply.map(wd => ({
+      wday: wd,
+      sourceDate: firstOf[wd],
+      sourceStops: records[firstOf[wd]].stops,
+      targetDates: laterOf[wd],
+    })));
+  };
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90dvh]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <h2 className="font-bold text-slate-800">📅 月次パターン反映</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-slate-400 text-xl">×</button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-4 py-3">
+          <p className="text-xs text-slate-500 mb-3">
+            <span className="font-bold text-blue-600">{year}年{month}月</span> の各曜日の初回データを、同じ曜日の2週目以降に反映します。
+            チェックを入れた曜日のみ反映されます。
+          </p>
+
+          {patterns.length === 0 ? (
+            <div className="text-center py-8 text-slate-400 text-sm">
+              <div className="text-3xl mb-2">📭</div>
+              <div>この月の第1週（月〜金）にデータがありません。</div>
+              <div className="mt-1 text-xs">先に最初の週の訪問先を入力・保存してください。</div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {[1,2,3,4,5].filter(wd => firstOf[wd]).map(wd => {
+                const hasPattern = patterns.includes(wd);
+                const src = records[firstOf[wd]];
+                const stops = src?.stops || [];
+                const targets = laterOf[wd] || [];
+                const overCnt = targets.filter(ds => records[ds]?.stops?.length > 0).length;
+                return (
+                  <div key={wd} className={`rounded-xl border p-3 ${hasPattern ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50 opacity-60"}`}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      {hasPattern && (
+                        <input type="checkbox" checked={!!checked[wd]} onChange={() => toggle(wd)}
+                          className="w-4 h-4 accent-blue-600" />
+                      )}
+                      <span className="font-bold text-sm text-slate-700">{WDAY_NAMES[wd]}曜日</span>
+                      <span className="text-xs text-slate-400">{firstOf[wd]} を元に</span>
+                      {!hasPattern && <span className="text-xs text-slate-400 ml-auto">（第1週にデータなし）</span>}
+                    </div>
+                    {hasPattern && (
+                      <>
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                          {stops.map((s,i) => (
+                            <span key={i} className="bg-white border border-blue-200 text-blue-700 text-xs rounded-lg px-2 py-0.5">
+                              {i+1}. {s.districtName}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          反映先：
+                          {targets.map(ds => {
+                            const hasData = records[ds]?.stops?.length > 0;
+                            return (
+                              <span key={ds} className={`inline-block mr-1 px-1.5 py-0.5 rounded font-medium ${hasData ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"}`}>
+                                {dateLabel(ds)}{hasData ? "（上書き）" : ""}
+                              </span>
+                            );
+                          })}
+                          {targets.length === 0 && <span className="text-slate-400">この月は1回のみ</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {overwriteDates.length > 0 && (
+            <div className="mt-3 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 text-xs text-orange-700">
+              ⚠️ オレンジの日付は既にデータがあり、上書きされます（訪問先のみ。出退勤時刻・距離は保持）。
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 pb-4 pt-2 border-t border-slate-100 flex gap-2">
+          <button onClick={onClose} className="flex-1 border border-slate-200 rounded-xl py-3 text-sm text-slate-600 active:bg-slate-100">キャンセル</button>
+          {patterns.length > 0 && (
+            <button
+              onClick={handleApply}
+              disabled={!patterns.some(wd => checked[wd])}
+              className="flex-1 bg-blue-600 active:bg-blue-800 text-white rounded-xl py-3 text-sm font-bold disabled:opacity-40"
+            >
+              反映する
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 確認・プレビューモーダル ──────────────────
+function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onClose }) {
+  const base = rec.base?.districtName || settings.defaultBase.districtName;
+  const returnBase = rec.returnBase?.districtName || base;
+  const stops = rec.stops;
+  const legDists = routeData.legDists;
+  const total = routeData.total || rec.totalDistance || 0;
+
+  // 区間行を構築
+  const rows = stops.map((s,i)=>({
+    from: i===0 ? base : stops[i-1].districtName,
+    to: s.districtName,
+    dist: legDists[i] || s.distanceFromPrev || 0
+  }));
+  if (stops.length > 0 || base !== returnBase) {
+    if (stops.length === 0) {
+      rows.push({
+        from: base,
+        to: `${returnBase}（到着）`,
+        dist: legDists[0] || rec.returnDistance || 0
+      });
+    } else {
+      rows.push({
+        from: stops[stops.length-1].districtName,
+        to: `${returnBase}（到着）`,
+        dist: legDists[stops.length] || rec.returnDistance || 0
+      });
+    }
+  }
+
+  const routeStr = stops.length > 0
+    ? [base, ...stops.map(s=>s.districtName), returnBase].join(" → ")
+    : base !== returnBase ? `${base} → ${returnBase}` : `${base}（訪問先なし）`;
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[92dvh] overflow-y-auto">
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">日報確認</h2>
+              <p className="text-xs text-slate-400">{dateLabel(date)}</p>
+            </div>
+            <button onClick={onClose} className="text-slate-400 text-2xl w-10 h-10 flex items-center justify-center">×</button>
+          </div>
+
+          {/* ルート文字列 */}
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4 text-sm text-blue-800 font-medium leading-relaxed break-all">
+            {routeStr}
+          </div>
+
+          {/* 区間テーブル */}
+          {rows.length > 0 ? (
+            <div className="overflow-hidden rounded-xl border border-slate-200 mb-4">
+              <table className="preview-table">
+                <thead>
+                  <tr>
+                    <th>区間</th>
+                    <th className="text-right w-24">距離</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r,i)=>(
+                    <tr key={i}>
+                      <td>{r.from} → {r.to}</td>
+                      <td className="text-right font-semibold">{r.dist>0?`${r.dist} km`:"─"}</td>
+                    </tr>
+                  ))}
+                  <tr className="total-row">
+                    <td className="font-bold">合計走行距離</td>
+                    <td className="text-right font-bold">{total>0?`${total} km`:"─"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-6 text-slate-400 text-sm mb-4">訪問先が登録されていません</div>
+          )}
+
+          {/* 勤務時間 */}
+          <div className="flex gap-3 mb-5">
+            <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-center">
+              <div className="text-xs text-slate-500 mb-0.5">出勤</div>
+              <div className="font-bold text-slate-800">{rec.startTime||"─"}</div>
+            </div>
+            <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-center">
+              <div className="text-xs text-slate-500 mb-0.5">退勤</div>
+              <div className="font-bold text-slate-800">{rec.endTime||"─"}</div>
+            </div>
+          </div>
+
+          {/* ボタン */}
+          <div className="flex gap-3">
+            <button onClick={onSave}
+              className="flex-1 bg-blue-600 text-white rounded-xl py-3.5 font-bold text-base active:bg-blue-800">
+              💾 保存
+            </button>
+            <button onClick={onExcel}
+              className="flex-1 bg-emerald-600 text-white rounded-xl py-3.5 font-bold text-base active:bg-emerald-800">
+              📊 Excel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 住所検索バー ─────────────────────────────
+function SearchBar({ onResult, mappings }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef();
+
+  const onChange = e => {
+    const v = e.target.value; setQ(v); clearTimeout(timer.current);
+    if (v.length < 2) { setResults([]); return; }
+    timer.current = setTimeout(async()=>{
+      setBusy(true);
+      try { setResults((await searchAddress(v+" 釧路")).slice(0,5)); } catch { setResults([]); }
+      setBusy(false);
+    }, 700);
+  };
+
+  const onSelect = r => {
+    const addr = r.display_name;
+    onResult({ lat:parseFloat(r.lat), lng:parseFloat(r.lon), address:addr, suggested:autoDistrict(addr,mappings) });
+    setQ(""); setResults([]);
+  };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <input className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-3 text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+          placeholder="住所・施設名で検索..." value={q} onChange={onChange} />
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-base">🔍</span>
+        {busy && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs animate-pulse">●</span>}
+      </div>
+      {results.length>0 && (
+        <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl z-40 mt-1 overflow-hidden">
+          {results.map((r,i)=>(
+            <button key={i} onClick={()=>onSelect(r)}
+              className="w-full text-left px-3 py-3 active:bg-blue-100 border-b border-slate-50 last:border-0 text-sm text-slate-800 truncate">
+              {r.display_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── お気に入りメモ登録モーダル ────────────────
+function FavMemoModal({ stop, onSave, onClose }) {
+  const [memo, setMemo] = useState("");
+  const ref = useRef();
+  useEffect(()=>{ setTimeout(()=>ref.current?.focus(), 150); }, []);
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-sm p-5">
+        <h3 className="font-bold text-slate-800 mb-1 text-lg">☆ お気に入りに登録</h3>
+        <p className="text-sm font-bold text-blue-700 mb-0.5">{stop.districtName}</p>
+        <p className="text-xs text-slate-400 mb-4 truncate">{stop.address.slice(0,40)}</p>
+        <label className="text-xs font-medium text-slate-600 mb-1 block">メモ（任意）</label>
+        <input ref={ref}
+          className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-5"
+          value={memo} onChange={e=>setMemo(e.target.value)}
+          placeholder="例: Aさん宅、駐車場あり"
+          onKeyDown={e=>e.key==="Enter"&&onSave(memo)} />
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 border border-slate-300 rounded-xl py-3 font-medium text-slate-600">キャンセル</button>
+          <button onClick={()=>onSave(memo)}
+            className="flex-1 bg-yellow-400 hover:bg-yellow-500 text-white rounded-xl py-3 font-bold">☆ 登録する</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 出発地点変更モーダル ──────────────────────
+function BaseModal({ mode, current, favorites, onSave, onClose }) {
+  const [addr, setAddr] = useState(current.address);
+  const [name, setName] = useState(current.districtName);
+  const [busy, setBusy] = useState(false);
+  const [results, setResults] = useState([]);
+  const timer = useRef();
+
+  const onSearch = e => {
+    const v = e.target.value; setAddr(v); clearTimeout(timer.current);
+    if (v.length < 2) { setResults([]); return; }
+    timer.current = setTimeout(async () => {
+      try { setResults((await searchAddress(v + " 釧路")).slice(0, 5)); } catch { setResults([]); }
+    }, 600);
+  };
+
+  const onSelect = r => {
+    setAddr(r.display_name); setResults([]);
+  };
+
+  const save = async () => {
+    setBusy(true);
+    const r = await geocodeAddress(addr);
+    if (!r) { alert("住所が見つかりません。確認してください。"); setBusy(false); return; }
+    onSave({ lat: r.lat, lng: r.lng, address: addr, districtName: name });
+    setBusy(false); onClose();
+  };
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="modal-card bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-sm p-5">
+        <h3 className="font-bold text-slate-800 mb-4 text-lg">{mode === "start" ? "出発地点を変更" : "帰結地点を変更"}</h3>
+        <div className="mb-3 relative">
+          <label className="text-xs font-medium text-slate-600 mb-1 block">住所・施設名</label>
+          <input className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={addr} onChange={onSearch} placeholder="住所・施設名で検索..." />
+          {results.length > 0 && (
+            <div className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl z-40 mt-1 overflow-hidden">
+              {results.map((r,i) => (
+                <button key={i} onClick={() => onSelect(r)}
+                  className="w-full text-left px-3 py-2.5 text-sm text-slate-800 border-b border-slate-50 last:border-0 active:bg-blue-50 truncate">
+                  {r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mb-5">
+          <label className="text-xs font-medium text-slate-600 mb-1 block">地区名（Excel表示用）</label>
+          <input className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={name} onChange={e => setName(e.target.value)} placeholder="例: 灯" />
+        </div>
+        
+        {favorites && favorites.length > 0 && (
+          <div className="mb-5 border-t border-slate-100 pt-3">
+            <label className="text-xs font-bold text-slate-500 mb-2 block">☆ お気に入りから選択</label>
+            <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1" style={{ touchAction: 'pan-y' }}>
+              {favorites.map((fav, i) => (
+                <button key={i} onClick={() => { onSave(fav); onClose(); }}
+                  className="w-full text-left bg-yellow-50 hover:bg-yellow-100 border border-yellow-100 rounded-xl px-3 py-2.5 flex flex-col transition active:scale-[0.98]">
+                  <span className="font-bold text-yellow-800 text-sm leading-tight">{fav.districtName}</span>
+                  {fav.memo && <span className="text-xs text-yellow-600 mt-1 font-medium">{fav.memo}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 border border-slate-300 rounded-xl py-3 font-medium text-slate-600">キャンセル</button>
+          <button onClick={save} disabled={busy || !addr || !name}
+            className="flex-1 bg-emerald-600 text-white rounded-xl py-3 font-bold disabled:opacity-50">
+            {busy ? "検索中..." : "変更する"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// メインアプリ
+// ══════════════════════════════════════════════
+function App({ user, onLogout }) {
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [records, setRecords] = useState({});
+  const [favorites, setFavorites] = useState([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const userDocRef = useRef(null);
+  const [date, setDate] = useState(todayStr);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showFavs, setShowFavs] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [showPattern, setShowPattern] = useState(false);
+  const [showBaseEdit, setShowBaseEdit] = useState(null);
+  const [mapMode, setMapMode] = useState("stop");
+  const [favToast, setFavToast] = useState(null);
+  const [favMemoModal, setFavMemoModal] = useState(null);
+  const [distModal, setDistModal] = useState(null);
+  const [routeData, setRouteData] = useState({ legDists:[], total:0, geometry:null });
+  const [routeErr, setRouteErr] = useState(null);
+  const [calcBusy, setCalcBusy] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [ripple, setRipple] = useState(null); // { x, y } px座標
+
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markersRef = useRef([]);
+  const routeLineRef = useRef(null);
+  const distMarkersRef = useRef([]);
+  const settingsRef = useRef(settings);
+  const recRef = useRef(null);
+  const updateRecRef = useRef(null);
+  const addFavRef = useRef(null);
+
+  settingsRef.current = settings;
+
+  // ── 当日レコード ──────────────────────────
+  const rec = useMemo(()=>{
+    const r = records[date] || {
+      date, startTime:"08:30", endTime:"17:30",
+      base: settings.defaultBase,
+      stops:[], returnDistance:0, totalDistance:0, saved:false
+    };
+    if (!r.returnBase) r.returnBase = r.base || settings.defaultBase;
+    return r;
+  }, [records, date, settings.defaultBase]);
+
+  recRef.current = rec;
+
+  // ── レコード更新 ──────────────────────────
+  const updateRec = useCallback(fn => {
+    setRecords(prev => {
+      const cur = prev[date] || {
+        date, startTime:"08:30", endTime:"17:30",
+        base: settingsRef.current.defaultBase,
+        stops:[], returnDistance:0, totalDistance:0, saved:false
+      };
+      if (!cur.returnBase) cur.returnBase = cur.base || settingsRef.current.defaultBase;
+      return { ...prev, [date]: fn(cur) };
+    });
+  }, [date]);
+  useEffect(()=>{ updateRecRef.current = updateRec; }, [updateRec]);
+
+  // ── データ読み込み（ゲスト=localStorage / ログイン=Firestore） ──
+  useEffect(() => {
+    if (user.isGuest) {
+      // ゲスト：localStorageから読む
+      setSettings(s => ({ ...DEFAULT_SETTINGS, ...ls.get("vndr_settings", {}) }));
+      setRecords(ls.get("vndr_records", {}));
+      setFavorites(ls.get("vndr_favorites", []));
+      setDataLoaded(true);
+      return;
+    }
+    const db = firebase.firestore();
+    const ref = db.collection("users").doc(user.uid);
+    userDocRef.current = ref;
+    ref.get().then(doc => {
+      if (doc.exists) {
+        const data = doc.data();
+        if (data.settings)  setSettings(() => ({ ...DEFAULT_SETTINGS, ...data.settings }));
+        if (data.records)   setRecords(data.records);
+        if (data.favorites) setFavorites(data.favorites);
+      }
+      setDataLoaded(true);
+    }).catch(() => setDataLoaded(true));
+  }, [user.uid]);
+
+  const fsSet = useCallback((field, value) => {
+    if (user.isGuest) { ls.set("vndr_" + field, value); return; }
+    userDocRef.current?.set({ [field]: value }, { merge: true });
+  }, [user.isGuest]);
+
+  // ── 地図初期化（一度だけ） ────────────────
+  useEffect(()=>{
+    const b = settings.defaultBase;
+    const map = L.map(mapContainerRef.current, {
+      center:[b.lat, b.lng], zoom:13,
+      zoomControl:true, tap:false,  // tap:false でLeafletのタップ処理を無効化（長押し独自実装）
+      contextmenu: false
+    });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution:'© OpenStreetMap contributors', maxZoom:19
+    }).addTo(map);
+    mapRef.current = map;
+
+    // ── 長押し検出（デスクトップ: mousedown） ──
+    let pressTimer = null;
+    let pressLatLng = null;
+
+    map.on('mousedown', e => {
+      pressLatLng = e.latlng;
+      pressTimer = setTimeout(() => {
+        if (pressLatLng) handleMapClickRef.current({ latlng: pressLatLng });
+        pressTimer = null; pressLatLng = null;
+      }, 600);
+    });
+    map.on('mouseup mousemove zoomstart dragstart', () => {
+      clearTimeout(pressTimer); pressTimer = null; pressLatLng = null;
+    });
+
+    // 右クリック（デスクトップ追加操作）
+    map.on('contextmenu', e => {
+      e.originalEvent.preventDefault();
+      clearTimeout(pressTimer); pressTimer = null;
+      handleMapClickRef.current(e);
+    });
+
+    // ── 長押し検出（モバイル: touchstart） ──
+    const mapEl = mapContainerRef.current;
+
+    const onTouchStart = e => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const rect = mapEl.getBoundingClientRect();
+      const px = L.point(touch.clientX - rect.left, touch.clientY - rect.top);
+      pressLatLng = map.containerPointToLatLng(px);
+      const rippleX = touch.clientX - rect.left;
+      const rippleY = touch.clientY - rect.top;
+      pressTimer = setTimeout(() => {
+        if (pressLatLng) {
+          // リップルエフェクト表示
+          setRipple({ x: rippleX, y: rippleY });
+          setTimeout(() => setRipple(null), 650);
+          handleMapClickRef.current({ latlng: pressLatLng });
+        }
+        pressTimer = null; pressLatLng = null;
+      }, 600);
+    };
+    const onTouchCancel = () => {
+      clearTimeout(pressTimer); pressTimer = null; pressLatLng = null;
+    };
+
+    mapEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    mapEl.addEventListener('touchmove', onTouchCancel, { passive: true });
+    mapEl.addEventListener('touchend', onTouchCancel, { passive: true });
+
+    return ()=>{
+      map.remove(); mapRef.current = null;
+      mapEl.removeEventListener('touchstart', onTouchStart);
+      mapEl.removeEventListener('touchmove', onTouchCancel);
+      mapEl.removeEventListener('touchend', onTouchCancel);
+    };
+  }, []); // eslint-disable-line
+
+  const mapModeRef = useRef(mapMode);
+  useEffect(()=>{ mapModeRef.current = mapMode; }, [mapMode]);
+
+  // ── マップクリックを ref でラップ ──────────
+  const handleMapClickRef = useRef(null);
+  const handleMapClick = useCallback(async e=>{
+    const { lat, lng } = e.latlng;
+    const address = await reverseGeocode(lat, lng);
+    const suggested = autoDistrict(address, settingsRef.current.districtMappings);
+
+    const curMode = mapModeRef.current;
+    // 訪問先と同じように、まずは常に DistrictModal を開くようにする
+    setDistModal({ lat, lng, address, suggested: suggested || extractDistrictFromAddress(address), mode: curMode });
+  }, []);
+  useEffect(()=>{ handleMapClickRef.current = handleMapClick; }, [handleMapClick]);
+
+  // ── stopsKey：座標変化時だけ再計算 ──────────
+  const stopsKey = useMemo(()=>
+    [rec.base.lat, rec.base.lng, rec.returnBase.lat, rec.returnBase.lng, ...rec.stops.map(s=>`${s.lat},${s.lng}`)].join("|"),
+    [rec.base, rec.returnBase, rec.stops]);
+
+  // ── マーカー描画 + 経路計算 ───────────────
+  useEffect(()=>{
+    const map = mapRef.current;
+    if (!map) return;
+    const r = recRef.current;
+    if (!r) return;
+
+    markersRef.current.forEach(m=>m.remove());
+    markersRef.current = [];
+    distMarkersRef.current.forEach(m=>m.remove());
+    distMarkersRef.current = [];
+    if (routeLineRef.current) { routeLineRef.current.remove(); routeLineRef.current=null; }
+
+    const bm = L.marker([r.base.lat,r.base.lng], { icon:makeIcon("発","#059669") })
+      .addTo(map).bindPopup(`<b>出発（${r.base.districtName}）</b>`);
+    markersRef.current.push(bm);
+
+    const em = L.marker([r.returnBase.lat,r.returnBase.lng], { icon:makeIcon("帰","#475569") })
+      .addTo(map).bindPopup(`<b>到着（${r.returnBase.districtName}）</b>`);
+    markersRef.current.push(em);
+
+    r.stops.forEach((s,i)=>{
+      const m = L.marker([s.lat,s.lng], { icon:makeIcon(String(i+1),"#2563EB") })
+        .addTo(map).bindPopup(`<b>${i+1}: ${s.districtName}</b><br/><small>${s.address.slice(0,35)}</small>`);
+      markersRef.current.push(m);
+    });
+
+    if (r.stops.length === 0 && r.base.lat === r.returnBase.lat && r.base.lng === r.returnBase.lng) {
+      setRouteData({ legDists:[], total:0, geometry:null });
+      return;
+    }
+
+    const waypoints = [r.base, ...r.stops, r.returnBase];
+    let cancelled = false;
+    setCalcBusy(true); setRouteErr(null);
+    fetchRoute(waypoints).then(({ legDistances, totalDistance, geometry })=>{
+      if (cancelled) return;
+      setRouteData({ legDists:legDistances, total:totalDistance, geometry });
+      setCalcBusy(false);
+      const m = mapRef.current;
+      if (geometry && m) {
+        const coords = geometry.coordinates.map(([lng,lat])=>[lat,lng]);
+        if (routeLineRef.current) routeLineRef.current.remove();
+        routeLineRef.current = L.polyline(coords, { color:'#2563EB', weight:4, opacity:0.75 }).addTo(m);
+        // 区間距離ラベルをルート中間点に表示
+        distMarkersRef.current.forEach(mk=>mk.remove());
+        distMarkersRef.current = [];
+        waypoints.forEach((wp, i) => {
+          if (i === 0) return;
+          const prev = waypoints[i-1];
+          const midLat = (prev.lat + wp.lat) / 2;
+          const midLng = (prev.lng + wp.lng) / 2;
+          const dist = legDistances[i-1];
+          if (dist > 0) {
+            const lbl = L.marker([midLat, midLng], {
+              icon: L.divIcon({
+                html: `<div style="background:white;border:2px solid #2563EB;border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;color:#2563EB;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">${dist} km</div>`,
+                className: "", iconSize: null, iconAnchor: [28, 10]
+              }),
+              interactive: false, zIndexOffset: -100
+            }).addTo(m);
+            distMarkersRef.current.push(lbl);
+          }
+        });
+      }
+    }).catch(()=>{
+      if (cancelled) return;
+      setRouteErr("経路計算に失敗しました（通信を確認してください）");
+      setCalcBusy(false);
+    });
+    return ()=>{ cancelled=true; };
+  }, [stopsKey]);
+
+
+  // ── ピン確定 ─────────────────────────────
+  const confirmDistrict = (name, saveToFav, memo) => {
+    const { lat, lng, address, mode } = distModal;
+    setDistModal(null);
+    const newStop = { lat, lng, address, districtName: name };
+
+    if (mode === "start") {
+      updateRec(r => ({ ...r, base: newStop }));
+      if (saveToFav) addFav({ ...newStop, memo: memo||"" });
+      setMapMode("stop");
+      return;
+    }
+    if (mode === "end") {
+      updateRec(r => ({ ...r, returnBase: newStop }));
+      if (saveToFav) addFav({ ...newStop, memo: memo||"" });
+      setMapMode("stop");
+      return;
+    }
+
+    updateRec(r=>{
+      if (r.stops.length >= 10) { alert("最大10件まで追加できます。"); return r; }
+      return { ...r, stops:[...r.stops, newStop] };
+    });
+    if (saveToFav) addFav({ ...newStop, memo: memo||"" });
+  };
+
+  const removeStop = i => updateRec(r=>({ ...r, stops:r.stops.filter((_,j)=>j!==i) }));
+  const addFav = stop => {
+    if (favorites.some(f=>f.lat===stop.lat&&f.lng===stop.lng)) { alert("すでに登録済みです。"); return; }
+    const nf = [...favorites,stop]; setFavorites(nf); fsSet("favorites",nf);
+  };
+  useEffect(()=>{ addFavRef.current = addFav; }); // eslint-disable-line
+  const addFromFav = fav => { setShowFavs(false); updateRec(r=>{ if(r.stops.length>=10){alert("最大10件");return r;} return{...r,stops:[...r.stops,{...fav}]}; }); };
+  const delFav = i => { const nf=favorites.filter((_,j)=>j!==i); setFavorites(nf); fsSet("favorites",nf); };
+
+  const handleSearchResult = ({ lat, lng, address, suggested }) => {
+    setDistModal({ lat, lng, address, suggested });
+    if (mapRef.current) mapRef.current.setView([lat,lng], 15);
+  };
+
+  // ── ドラッグ並び替え ─────────────────────
+  const dragIdx = useRef(null);
+  const onDragStart = i => { dragIdx.current=i; };
+  const onDragOver = e => e.preventDefault();
+  const onDrop = (e, i) => {
+    e.preventDefault();
+    const from = dragIdx.current;
+    if (from===null||from===i) return;
+    updateRec(r=>{ const s=[...r.stops]; const [x]=s.splice(from,1); s.splice(i,0,x); return{...r,stops:s}; });
+    dragIdx.current=null;
+  };
+
+  // ── 保存（更新済み records を返す） ──────────
+  const saveToday = () => {
+    const { legDists, total } = routeData;
+    let saved = null;
+    setRecords(prev=>{
+      const cur = prev[date] || rec;
+      const newStops = cur.stops.map((s,i)=>({ ...s, distanceFromPrev: legDists[i]||0 }));
+      const returnDist = legDists[cur.stops.length] || 0;
+      const updated = { ...cur, stops:newStops, returnDistance:returnDist, totalDistance:total, saved:true };
+      saved = { ...prev, [date]:updated };
+      fsSet("records", saved);
+      return saved;
+    });
+    setSaveMsg("保存しました！"); setTimeout(()=>setSaveMsg(""),2500);
+    return saved; // Excel 出力用に同期的に返す
+  };
+
+  const handleSaveSettings = ns => {
+    setSettings(ns); fsSet("settings",ns);
+    if (mapRef.current) mapRef.current.setView([ns.defaultBase.lat,ns.defaultBase.lng],13);
+  };
+
+  // ── 月次パターン反映 ─────────────────────────
+  const handleApplyPattern = (patterns) => {
+    setRecords(prev => {
+      const next = { ...prev };
+      for (const { sourceStops, targetDates } of patterns) {
+        for (const ds of targetDates) {
+          const existing = next[ds] || {};
+          next[ds] = {
+            ...existing,
+            stops: sourceStops.map(s => ({ ...s })),
+            saved: false,
+          };
+        }
+      }
+      fsSet("records", next);
+      return next;
+    });
+    setShowPattern(false);
+    setSaveMsg("パターンを反映しました！"); setTimeout(()=>setSaveMsg(""), 2500);
+  };
+
+  const handleBaseChange = newBase => {
+    updateRec(r => {
+      if (showBaseEdit === "start") return { ...r, base: newBase };
+      if (showBaseEdit === "end") return { ...r, returnBase: newBase };
+      return r;
+    });
+    if (mapRef.current) mapRef.current.setView([newBase.lat, newBase.lng], 14);
+  };
+
+  const displayLegDist = i => routeData.legDists[i] || rec.stops[i]?.distanceFromPrev || 0;
+  const displayTotal = routeData.total || rec.totalDistance || 0;
+  const displayReturn = routeData.legDists[rec.stops.length] || rec.returnDistance || 0;
+  const baseDistrict = rec.base?.districtName || settings.defaultBase.districtName;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", flex:"1 1 0", minHeight:0, overflow:"hidden" }}>
+      {/* ローディングオーバーレイ（地図コンテナを常にDOMに保持するため条件returnではなくoverlay） */}
+      {!dataLoaded && (
+        <div className="fixed inset-0 bg-blue-700 flex flex-col items-center justify-center gap-3 z-[9999]">
+          <div className="text-white text-sm">データを読み込み中…</div>
+          <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      )}
+
+      {/* ── ヘッダー ── */}
+      <header className="bg-blue-700 text-white px-3 py-2 flex items-center justify-between shadow-lg" style={{flexShrink:0,zIndex:10}}>
+        <span className="font-bold text-sm tracking-wide hidden sm:block">訪問看護 運転日報</span>
+        <span className="font-bold text-sm tracking-wide sm:hidden">運転日報</span>
+
+        {/* 日付ナビ */}
+        <div className="flex items-center gap-1">
+          <button onClick={()=>setDate(d=>addDays(d,-1))}
+            className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-blue-800 text-xl font-bold">‹</button>
+
+          {/* ネイティブ日付ピッカー（ラベルで覆う） */}
+          <label className="font-semibold text-sm px-2 py-1 min-w-[96px] text-center rounded-xl active:bg-blue-600 cursor-pointer relative select-none">
+            {dateLabel(date)}
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)}
+              className="date-hidden" />
+          </label>
+
+          <button onClick={()=>setDate(d=>addDays(d,1))}
+            className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-blue-800 text-xl font-bold">›</button>
+          {date!==todayStr() &&
+            <button onClick={()=>setDate(todayStr())}
+              className="text-xs bg-blue-500 active:bg-blue-600 px-2 py-1.5 rounded-lg ml-1">今日</button>}
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button onClick={()=>setShowSettings(true)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-blue-800 text-lg" title="設定">⚙️</button>
+          {user?.photoURL
+            ? <img src={user.photoURL} alt={user.displayName} onClick={onLogout}
+                className="w-8 h-8 rounded-full border-2 border-blue-400 cursor-pointer hover:opacity-80 active:opacity-60" title={`${user.displayName}｜ログアウト`} />
+            : <button onClick={onLogout}
+                className="text-xs bg-blue-500 active:bg-blue-600 px-2 py-1.5 rounded-lg whitespace-nowrap" title="ログアウト">
+                {user?.isGuest ? "ゲスト" : "ログアウト"}
+              </button>
+          }
+        </div>
+      </header>
+
+      {/* ── メインレイアウト ── */}
+      <div id="app-layout">
+
+        {/* 地図 */}
+        <div id="map-container">
+          <div ref={mapContainerRef} id="map" />
+
+          {/* 長押しリップル */}
+          {ripple && (
+            <div className="press-ripple" style={{ left:ripple.x, top:ripple.y }} />
+          )}
+
+          {calcBusy && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 rounded-full px-4 py-2 shadow-lg text-sm text-blue-700 font-medium z-30 whitespace-nowrap">
+              📡 経路計算中...
+            </div>
+          )}
+          {routeErr && (
+            <div className="absolute top-3 left-3 right-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2 shadow text-xs text-red-600 z-30 flex items-start gap-2">
+              <span className="flex-1">⚠️ {routeErr}</span>
+              <button onClick={()=>setRouteErr(null)} className="text-red-400 text-base">×</button>
+            </div>
+          )}
+          {/* マップモード切替 */}
+          <div className="absolute top-3 right-3 bg-white/95 backdrop-blur rounded-xl shadow border border-slate-200 p-2 z-[400] flex flex-col gap-1">
+            <div className="text-[10px] font-bold text-slate-500 mb-0.5 px-1 text-center">📍 長押しで選択</div>
+            <label className={`flex items-center gap-2 cursor-pointer rounded-lg px-2 py-1.5 transition ${mapMode==='stop'?'bg-blue-100':'hover:bg-slate-50'}`}>
+              <input type="radio" checked={mapMode==="stop"} onChange={()=>setMapMode("stop")} className="w-3.5 h-3.5 accent-blue-600" />
+              <span className="text-xs font-semibold text-slate-700">訪問先の追加</span>
+            </label>
+            <label className={`flex items-center gap-2 cursor-pointer rounded-lg px-2 py-1.5 transition ${mapMode==='start'?'bg-emerald-100':'hover:bg-slate-50'}`}>
+              <input type="radio" checked={mapMode==="start"} onChange={()=>setMapMode("start")} className="w-3.5 h-3.5 accent-emerald-600" />
+              <span className="text-xs font-semibold text-slate-700">出発地の変更</span>
+            </label>
+            <label className={`flex items-center gap-2 cursor-pointer rounded-lg px-2 py-1.5 transition ${mapMode==='end'?'bg-slate-200':'hover:bg-slate-50'}`}>
+              <input type="radio" checked={mapMode==="end"} onChange={()=>setMapMode("end")} className="w-3.5 h-3.5 accent-slate-600" />
+              <span className="text-xs font-semibold text-slate-700">到着地の変更</span>
+            </label>
+          </div>
+        </div>
+
+        {/* サイドバー */}
+        <div id="sidebar">
+          {/* 検索バー */}
+          <div className="px-3 pt-2.5 pb-2 border-b border-slate-100">
+            <SearchBar onResult={handleSearchResult} mappings={settings.districtMappings} />
+          </div>
+
+          {/* スクロールリスト */}
+          <div className="flex-1 overflow-y-auto sidebar-scroll px-3 py-2">
+            {/* 事業所 */}
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2.5 mb-2">
+              <div className="w-8 h-8 bg-emerald-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">発</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-emerald-700">出発（{rec.base?.districtName}）</div>
+                <div className="text-xs text-slate-400 truncate">{rec.base?.address}</div>
+              </div>
+              <div className="flex flex-shrink-0 gap-0.5">
+                <button onClick={()=>setFavMemoModal(rec.base)} title="お気に入り登録"
+                  className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-yellow-400 active:text-yellow-500 text-lg">☆</button>
+                <button onClick={()=>setMapMode("start")} title="地図から選択"
+                  className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm ${mapMode==="start"?"bg-emerald-200 text-emerald-800":"text-emerald-600 hover:bg-emerald-200"}`}>📍</button>
+                <button onClick={()=>setShowBaseEdit("start")} title="検索して変更"
+                  className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-emerald-600 text-sm">🔍</button>
+              </div>
+            </div>
+
+            {/* 訪問先 */}
+            {rec.stops.map((s,i)=>(
+              <div key={`${s.lat}${s.lng}${i}`}
+                className="stop-item bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 mb-2"
+                draggable onDragStart={()=>onDragStart(i)} onDragOver={onDragOver} onDrop={e=>onDrop(e,i)}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
+                    {i+1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-800 text-sm leading-tight">{s.districtName}</div>
+                    <div className="text-xs text-slate-400 truncate">{s.address.slice(0,32)}</div>
+                  </div>
+                  <div className="flex flex-shrink-0">
+                    <button onClick={()=>setFavMemoModal(s)} title="お気に入り登録"
+                      className="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-yellow-400 active:text-yellow-500 text-lg">☆</button>
+                    <button onClick={()=>removeStop(i)} title="削除"
+                      className="w-9 h-9 flex items-center justify-center text-slate-300 active:text-red-500 text-xl">×</button>
+                  </div>
+                </div>
+                {displayLegDist(i) > 0 && (
+                  <div className="mt-1 ml-10 text-xs text-blue-600 font-semibold">
+                    {i === 0 ? baseDistrict : rec.stops[i-1].districtName}から {displayLegDist(i)} km
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* お気に入りから追加 */}
+            {rec.stops.length < 10 && (
+              <button onClick={()=>setShowFavs(true)}
+                className="w-full border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500 mb-2">
+                ☆ お気に入りから追加
+              </button>
+            )}
+
+            {/* 帰社 */}
+            <div className="flex items-center gap-2 bg-slate-100 border border-slate-200 rounded-xl px-3 py-2.5 mb-2">
+              <div className="w-8 h-8 bg-slate-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">帰</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold text-slate-700">到着（{rec.returnBase?.districtName}）</div>
+                {displayReturn > 0 && <div className="text-xs text-blue-600 font-semibold">{rec.stops.length>0 ? rec.stops[rec.stops.length-1].districtName : rec.base?.districtName} から {displayReturn} km</div>}
+              </div>
+              <div className="flex flex-shrink-0 gap-0.5">
+                <button onClick={()=>setFavMemoModal(rec.returnBase)} title="お気に入り登録"
+                  className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-yellow-400 active:text-yellow-500 text-lg">☆</button>
+                <button onClick={()=>setMapMode("end")} title="地図から選択"
+                  className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm ${mapMode==="end"?"bg-slate-300 text-slate-800":"text-slate-500 hover:bg-slate-200"}`}>📍</button>
+                <button onClick={()=>setShowBaseEdit("end")} title="検索して変更"
+                  className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 text-sm">🔍</button>
+              </div>
+            </div>
+          </div>
+
+          {/* 下部固定パネル */}
+          <div className="border-t border-slate-100 px-3 pt-2.5 pb-3 space-y-2.5 flex-shrink-0 bottom-panel">
+            {/* 勤務時間 */}
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500 w-8 flex-shrink-0">出勤</label>
+              <input type="time" value={rec.startTime}
+                onChange={e=>updateRec(r=>({...r,startTime:e.target.value}))}
+                className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50" />
+              <label className="text-xs text-slate-500 w-8 flex-shrink-0">退勤</label>
+              <input type="time" value={rec.endTime}
+                onChange={e=>updateRec(r=>({...r,endTime:e.target.value}))}
+                className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 bg-slate-50" />
+            </div>
+
+            {/* 合計距離 */}
+            <div className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-2.5">
+              <span className="text-sm text-blue-700 font-semibold">本日合計</span>
+              <span className="text-2xl font-bold text-blue-700">{displayTotal > 0 ? `${displayTotal} km` : "─ km"}</span>
+            </div>
+
+            {/* 月次パターン反映ボタン */}
+            <button onClick={()=>setShowPattern(true)}
+              className="w-full border border-indigo-300 bg-indigo-50 active:bg-indigo-100 text-indigo-700 rounded-xl py-2.5 text-sm font-semibold">
+              📅 {ymLabel(date.slice(0,7))}の訪問パターンを全曜日に反映
+            </button>
+
+            {/* 確認・保存ボタン（1ボタンに統合） */}
+            <button onClick={()=>setShowPreview(true)}
+              className="w-full bg-blue-600 active:bg-blue-800 text-white rounded-xl py-3.5 font-bold text-base shadow-sm">
+              {saveMsg || "📋 確認・保存 / Excel出力"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── モーダル群 ── */}
+      {showPattern && <PatternModal records={records} date={date} onApply={handleApplyPattern} onClose={()=>setShowPattern(false)} />}
+      {showSettings && <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setShowSettings(false)} />}
+      {showBaseEdit && <BaseModal mode={showBaseEdit} current={showBaseEdit==="start" ? rec.base : rec.returnBase} favorites={favorites} onSave={handleBaseChange} onClose={()=>setShowBaseEdit(null)} />}
+      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>setDistModal(null)} />}
+      {showFavs && <FavoritesModal favorites={favorites} onSelect={addFromFav} onDelete={delFav} onClose={()=>setShowFavs(false)} />}
+      {showPreview && (
+        <PreviewModal
+          rec={rec} settings={settings} routeData={routeData} date={date}
+          onSave={()=>{ saveToday(); setShowPreview(false); }}
+          onExcel={()=>{ const r=saveToday(); exportExcel(settings, r||records, date.slice(0,7)); setShowPreview(false); }}
+          onClose={()=>setShowPreview(false)}
+        />
+      )}
+
+      {/* ── お気に入りトースト（自動追加時） ── */}
+      {favToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-3 rounded-2xl shadow-xl z-[1500] flex items-center gap-3 whitespace-nowrap">
+          <span className="text-sm">{favToast.districtName}を追加</span>
+          <button onClick={()=>{ setFavMemoModal(favToast); setFavToast(null); }}
+            className="text-yellow-300 text-sm font-bold active:text-yellow-100">☆ お気に入り</button>
+          <button onClick={()=>setFavToast(null)} className="text-slate-400 text-lg leading-none">×</button>
+        </div>
+      )}
+      {/* ── お気に入りメモモーダル ── */}
+      {favMemoModal && (
+        <FavMemoModal
+          stop={favMemoModal}
+          onSave={memo=>{ addFav({ ...favMemoModal, memo: memo||"" }); setFavMemoModal(null); }}
+          onClose={()=>setFavMemoModal(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AuthWrapper() {
+  const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined=確認中
+  const [isGuest, setIsGuest] = useState(false);
+
+  useEffect(() => {
+    firebase.auth().getRedirectResult().catch(() => {});
+    const unsubscribe = firebase.auth().onAuthStateChanged(u => setFirebaseUser(u ?? null));
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    if (!confirm("ログアウトしますか？")) return;
+    await firebase.auth().signOut();
+  };
+
+  // ゲストモードは Firebase の状態と完全に独立
+  if (isGuest) {
+    return <App user={GUEST_USER} onLogout={() => setIsGuest(false)} />;
+  }
+
+  if (firebaseUser === undefined) {
+    return (
+      <div className="fixed inset-0 bg-blue-700 flex items-center justify-center">
+        <div className="text-white text-sm">読み込み中…</div>
+      </div>
+    );
+  }
+  if (!firebaseUser) return <LoginScreen onGuest={() => setIsGuest(true)} />;
+  return <App user={firebaseUser} onLogout={handleLogout} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<AuthWrapper />);
+</script>
+</body>
+</html>
