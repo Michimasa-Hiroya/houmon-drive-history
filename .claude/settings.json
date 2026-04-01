@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/User/Desktop/ClaudeCode/**)",
+      "Bash(find /c/Users/User/Desktop/ClaudeCode -type f -name *.md -o -name *.json -o -name *.sh)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\User\\.claude"
+    ]
+  }
+}
