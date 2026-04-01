@@ -26,7 +26,12 @@
   }
 
   /* ── 地図 ── */
-  #map { width: 100%; height: 100%; cursor: crosshair; }
+  #map { 
+    width: 100%; height: 100%; cursor: crosshair;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
   .leaflet-container { background: #dbeafe; font-family: 'Noto Sans JP', sans-serif; }
   .leaflet-popup-content { margin: 8px 12px; font-size: 13px; }
   .leaflet-control-zoom { border-radius: 10px !important; overflow: hidden; }
@@ -133,7 +138,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
 
 <!-- Firebase compat SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -244,6 +249,7 @@ const DEFAULT_SETTINGS = {
   defaultBase: DEFAULT_BASE,
   staffName: "",
   vehicleAllowanceRate: 40,
+  gasPrice: 170,
   districtMappings: []
 };
 
@@ -283,6 +289,8 @@ const extractDistrictFromAddress = address => {
 
 const autoDistrict = (address, mappings) => {
   for (const m of mappings) if (address.includes(m.pattern)) return m.districtName;
+  // 興津の住所の場合は強制的に興津にする（POIで他の名前が表示されるのを防ぐ）
+  if (address.includes("興津")) return "興津";
   // マッピング未登録でも住所から地区名を自動推定
   return extractDistrictFromAddress(address);
 };
@@ -345,117 +353,128 @@ function makeIcon(label, color) {
 }
 
 // ── Excel 出力 ──────────────────────────────
-function exportExcel(settings, records, ym) {
+async function exportExcel(settings, records, ym) {
   const [year, month] = ym.split("-").map(Number);
-  const days = new Date(year, month, 0).getDate();
   const stn = settings.defaultBase.districtName || "訪問看護ステーション灯";
   const staff = settings.staffName || "";
   const rate = settings.vehicleAllowanceRate || 40;
 
-  // 平日のみ収集
-  const weekdayDates = [];
-  for (let d = 1; d <= days; d++) {
-    const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const wd = new Date(ds + "T00:00:00").getDay();
-    if (wd !== 0 && wd !== 6) weekdayDates.push({ d, ds });
-  }
+  try {
+    // テンプレートファイルを読み込む（同じ階層にある前提）
+    const res = await fetch("灯　車両日報.xlsx");
+    if (!res.ok) throw new Error("テンプレートが見つかりません");
+    const arrayBuffer = await res.arrayBuffer();
 
-  // ── 行データ組み立て ──────────────────────────
-  // 列: A=月部分, B=日, C=行き先, D=時間, E=走行距離  (0-indexed: 0,1,2,3,4)
-  const rows = [];
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(arrayBuffer);
+    const ws = workbook.getWorksheet(1); // シート1
 
-  // 行0: タイトル（A列に配置、C列にサブタイトル）
-  rows.push(["運　転　日　誌", "", `【 ${year} 年 ${month} 月 】`, "", ""]);
+    // 年月・事業所・氏名をヘッダーにセット
+    ws.getCell('L1').value = year;
+    ws.getCell('N1').value = month;
+    ws.getCell('L4').value = stn;
+    ws.getCell('R4').value = staff;
 
-  // 行1: [決裁] ヘッダー
-  rows.push(["[決裁]", "", "", "事業所名", "運転者名"]);
-
-  // 行2: 所長+事業所名+運転者名
-  rows.push(["所長", "", "", stn, staff]);
-
-  // 行3: 空行（所長欄の高さ確保）
-  rows.push(["", "", "", "", ""]);
-
-  // 行4: 列ヘッダー
-  rows.push(["日付", "", "行　　き　　先", "時　　　　間", "走行距離"]);
-
-  // 行5〜: 平日データ
-  const dataStartRow = 5;
-  let firstDay = true;
-  weekdayDates.forEach(({ d, ds }) => {
-    const rec = records[ds];
-    const startBase = rec?.base?.districtName || stn;
-    const endBase   = rec?.returnBase?.districtName || startBase;
-    let route = "";
-    if (rec?.stops?.length) {
-      const names = rec.stops.map(s => s.districtName || s.address.slice(0, 8));
-      route = [startBase, ...names, endBase].join("→");
-    } else if (rec?.startTime) {
-      route = startBase === endBase ? startBase : `${startBase}→${endBase}`;
+    // 平日のみ収集
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const weekdayDates = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const wd = new Date(ds + "T00:00:00").getDay();
+      if (wd !== 0 && wd !== 6) weekdayDates.push({ d, ds });
     }
-    const dist = rec?.totalDistance > 0 ? rec.totalDistance
-      : (rec?.stops?.length > 0
-          ? Math.round((rec.stops.reduce((s, st) => s + (st.distanceFromPrev || 0), 0) + (rec.returnDistance || 0)) * 10) / 10
-          : "");
-    const timeStr = (rec?.startTime && rec?.endTime)
-      ? `${rec.startTime} ～ ${rec.endTime}`
-      : (rec?.startTime ? rec.startTime : "");
-    const dateLeft = firstDay ? `${month} /` : "/";
-    firstDay = false;
-    rows.push([dateLeft, d, route, timeStr, dist !== "" ? dist : ""]);
-  });
 
-  // フッター行
-  const dataEndRow = dataStartRow + weekdayDates.length - 1; // 0-indexed最終データ行
-  const distColLetter = "E";
-  const sumFormula = `SUM(${distColLetter}${dataStartRow + 1}:${distColLetter}${dataEndRow + 1})`;
-  rows.push([
-    `＠${rate}円`, "×", `         km ＝`, "          円",
-    ""
-  ]);
-  rows.push(["", "", "", `走行距離月計→`, { f: sumFormula }]);
+    // データ行(7行目〜31行目)を一度クリア（書式は残す）
+    for (let r = 7; r <= 31; r++) {
+      ws.getCell('B' + r).value = null; // 月
+      ws.getCell('D' + r).value = null; // 日
+      ws.getCell('E' + r).value = null; // 行き先
+      ws.getCell('Q' + r).value = null; // 出時
+      ws.getCell('S' + r).value = null; // 出分
+      ws.getCell('T' + r).value = null; // 〜
+      ws.getCell('U' + r).value = null; // 退時
+      ws.getCell('W' + r).value = null; // 退分
+      ws.getCell('X' + r).value = null; // 距離
+    }
 
-  // ── SheetJS ────────────────────────────────────
-  const ws = XLSX.utils.aoa_to_sheet(rows);
+    // 取得した平日データを埋め込む(最大25行)
+    let totalDist = 0;
+    weekdayDates.forEach((info, i) => {
+      const r = 7 + i;
+      if (r > 31) return; // 枠超え防止
 
-  // 列幅
-  ws["!cols"] = [
-    { wch: 6  }, // A: 月/
-    { wch: 4  }, // B: 日
-    { wch: 52 }, // C: 行き先
-    { wch: 16 }, // D: 時間
-    { wch: 10 }, // E: 距離
-  ];
+      const { d, ds } = info;
+      const rec = records[ds];
 
-  // 行の高さ（ヘッダー部分を少し高く）
-  ws["!rows"] = [
-    { hpt: 28 }, // タイトル
-    { hpt: 16 }, // [決裁]
-    { hpt: 22 }, // 所長行
-    { hpt: 22 }, // 空行
-    { hpt: 20 }, // 列ヘッダー
-  ];
+      // 月/日
+      ws.getCell('B' + r).value = month;
+      ws.getCell('C' + r).value = "/";
+      ws.getCell('D' + r).value = d;
 
-  // セル結合
-  ws["!merges"] = [
-    // タイトル: A1〜B1
-    { s:{r:0,c:0}, e:{r:0,c:1} },
-    // 所長欄: A2〜A4 (縦結合)
-    { s:{r:1,c:0}, e:{r:3,c:0} },
-    // 所長欄右の空欄: B2〜B4
-    { s:{r:1,c:1}, e:{r:3,c:1} },
-    // 列ヘッダー 日付: A5〜B5
-    { s:{r:4,c:0}, e:{r:4,c:1} },
-    // データ行の日付列 A〜B を結合
-    ...weekdayDates.map((_, i) => ({ s:{r:dataStartRow+i,c:0}, e:{r:dataStartRow+i,c:1} })),
-  ];
+      if (!rec) return; // データなしの場合は空欄
 
-  // ページ設定（A4横）
-  ws["!pageSetup"] = { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+      const startBase = rec.base?.districtName || stn;
+      const endBase   = rec.returnBase?.districtName || startBase;
+      
+      let route = "";
+      if (rec.stops && rec.stops.length > 0) {
+        const names = rec.stops.map(s => s.districtName || s.address.slice(0, 8));
+        route = [startBase, ...names, endBase].join("→");
+      } else if ((rec.startTime && rec.startTime !== "08:30") || rec.saved) {
+        route = startBase === endBase ? startBase : `${startBase}→${endBase}`;
+      }
+      ws.getCell('E' + r).value = route;
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, `${year}年${month}月`);
-  XLSX.writeFile(wb, `運転日誌_${year}年${String(month).padStart(2,'0')}月.xlsx`);
+      // 時間
+      if (rec.startTime) {
+        const [sh, sm] = rec.startTime.split(":");
+        ws.getCell('Q' + r).value = Number(sh);
+        ws.getCell('R' + r).value = ":";
+        ws.getCell('S' + r).value = Number(sm);
+      }
+      if (rec.endTime) {
+        const [eh, em] = rec.endTime.split(":");
+        ws.getCell('T' + r).value = "～";
+        ws.getCell('U' + r).value = Number(eh);
+        ws.getCell('V' + r).value = ":";
+        ws.getCell('W' + r).value = Number(em);
+      }
+
+      // 距離
+      const dist = rec.totalDistance > 0 ? rec.totalDistance
+        : (rec.stops && rec.stops.length > 0
+            ? Math.round((rec.stops.reduce((sum, st) => sum + (st.distanceFromPrev || 0), 0) + (rec.returnDistance || 0)) * 10) / 10
+            : 0);
+
+      if (dist > 0) {
+        ws.getCell('X' + r).value = dist;
+        totalDist += dist;
+      }
+    });
+
+    // レートや合計など (32行目周り)
+    ws.getCell('B32').value = rate;
+    // 通常Excel上のSUM関数がX列や計算セルにあるはずなので自動計算されますが、値も万一のため上書き
+    totalDist = Math.round(totalDist * 10) / 10;
+    ws.getCell('X32').value = totalDist;
+
+    const exportBuffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([exportBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `運転日誌_${year}年${String(month).padStart(2,'0')}月.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+
+  } catch (err) {
+    console.error(err);
+    alert("Excel出力でエラーが発生しました。テンプレートファイル(灯　車両日報.xlsx)が同じ場所にない可能性があります。");
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -469,6 +488,7 @@ function SettingsModal({ settings, onSave, onClose }) {
     baseAddress: settings.defaultBase.address,
     baseDistrict: settings.defaultBase.districtName,
     rate: settings.vehicleAllowanceRate,
+    gasPrice: settings.gasPrice === undefined ? 170 : settings.gasPrice,
   });
   const [busy, setBusy] = useState(false);
 
@@ -481,7 +501,7 @@ function SettingsModal({ settings, onSave, onClose }) {
       base = { lat:r.lat, lng:r.lng, address:f.baseAddress, districtName:f.baseDistrict };
     }
     onSave({ ...settings, staffName:f.staffName,
-      vehicleAllowanceRate:Number(f.rate), defaultBase:base });
+      vehicleAllowanceRate:Number(f.rate), gasPrice:Number(f.gasPrice), defaultBase:base });
     setBusy(false); onClose();
   };
 
@@ -509,10 +529,17 @@ function SettingsModal({ settings, onSave, onClose }) {
             <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={f.baseDistrict} placeholder="訪問看護ステーション灯" onChange={e=>setF(v=>({...v,baseDistrict:e.target.value}))} />
           </div>
-          <div className="mb-5">
-            <label className="block text-sm font-medium text-slate-600 mb-1">車両手当（円/km）</label>
-            <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={f.rate} onChange={e=>setF(v=>({...v,rate:e.target.value}))} />
+          <div className="flex gap-3 mb-5">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-slate-600 mb-1">交通費単価（円/km）</label>
+              <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={f.rate} onChange={e=>setF(v=>({...v,rate:e.target.value}))} />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-slate-600 mb-1">ガソリン価格（円/L）</label>
+              <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={f.gasPrice} onChange={e=>setF(v=>({...v,gasPrice:e.target.value}))} />
+            </div>
           </div>
 
           <div className="flex gap-3 pt-4 border-t">
@@ -1589,7 +1616,7 @@ function App({ user, onLogout }) {
             {/* 合計距離＋手当＋ガソリン代 */}
             {(() => {
               const rate = settings.vehicleAllowanceRate || 40;
-              const gasPrice = 170; // 釧路市レギュラー現在価格（円/L）
+              const gasPrice = settings.gasPrice === undefined ? 170 : settings.gasPrice;
               const kmpl = 13;      // 普通乗用車の平均燃費（km/L）
               const allowance = displayTotal > 0 ? Math.round(displayTotal * rate) : null;
               const gasCost   = displayTotal > 0 ? Math.round(displayTotal / kmpl * gasPrice) : null;
@@ -1676,10 +1703,18 @@ function AuthWrapper() {
     const timeout = setTimeout(() => setFirebaseUser(prev => prev === undefined ? null : prev), 3000);
     let unsubscribe = () => {};
     try {
-      firebase.auth().getRedirectResult().catch(() => {});
-      unsubscribe = firebase.auth().onAuthStateChanged(u => {
-        clearTimeout(timeout);
-        setFirebaseUser(u ?? null);
+      firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).then(() => {
+        firebase.auth().getRedirectResult().catch(() => {});
+        unsubscribe = firebase.auth().onAuthStateChanged(u => {
+          clearTimeout(timeout);
+          setFirebaseUser(u ?? null);
+        });
+      }).catch(err => {
+        console.warn("Persistence Error:", err);
+        unsubscribe = firebase.auth().onAuthStateChanged(u => {
+          clearTimeout(timeout);
+          setFirebaseUser(u ?? null);
+        });
       });
     } catch(e) {
       clearTimeout(timeout);
