@@ -276,23 +276,22 @@ const addDays = (str, n) => {
 const ymLabel = str => { const [y,m]=str.split("-"); return `${y}年${Number(m)}月`; };
 
 // ── 地区名自動変換 ──────────────────────────
-// Nominatim の先頭コンポーネント「桜ケ岡七丁目」→「桜ケ岡」のように抽出
+// Nominatim の先頭コンポーネントなどをベースにするフォールバック用
 const extractDistrictFromAddress = address => {
+  if (!address) return "";
   const first = address.split(",")[0].trim();
-  // 「七丁目」「1番地」「2号」など 丁目/番地/号 とその前の数字を除去
   const stripped = first
     .replace(/[一二三四五六七八九十百千\d０-９]+[丁目番地号条丁]+.*$/, "")
-    .replace(/[ー－\-]\d+.*$/, "")  // 「興津２－２１」→「興津」
+    .replace(/[ー－\-]\d+.*$/, "")
     .trim();
   return stripped || first;
 };
 
 const autoDistrict = (address, mappings) => {
+  if (!address) return null;
   for (const m of mappings) if (address.includes(m.pattern)) return m.districtName;
-  // 興津の住所の場合は強制的に興津にする（POIで他の名前が表示されるのを防ぐ）
   if (address.includes("興津")) return "興津";
-  // マッピング未登録でも住所から地区名を自動推定
-  return extractDistrictFromAddress(address);
+  return null;
 };
 
 // ── Nominatim 逆ジオコーディング ────────────
@@ -303,8 +302,25 @@ async function reverseGeocode(lat, lng) {
       { headers: { "User-Agent": "VNDrivingLog/1.0" } }
     );
     const d = await res.json();
-    return d.display_name || "不明な住所";
-  } catch { return "住所取得失敗"; }
+    let exactPlace = null;
+    if (d && d.address) {
+      const a = d.address;
+      // 丁目より大きい単位の地名を優先的に取得（道路名やPOIを避けるため）
+      const list = [a.quarter, a.suburb, a.neighbourhood, a.village, a.town, a.city_district];
+      for (let n of list) {
+        if (n) {
+          const stripped = n.replace(/[一二三四五六七八九十百千\d０-９]+[丁目番地号条丁]+.*$/, "")
+                            .replace(/[ー－\-]\d+.*$/, "")
+                            .trim();
+          if (stripped) { exactPlace = stripped; break; }
+        }
+      }
+    }
+    return {
+      address: d.display_name || "不明な住所",
+      exactPlace: exactPlace
+    };
+  } catch { return { address: "住所取得失敗", exactPlace: null }; }
 }
 
 // ── Nominatim 検索 ────────────────────────
@@ -1220,10 +1236,22 @@ function App({ user, onLogout }) {
       });
       pendingMarkerRef.current = L.marker([lat,lng],{icon,zIndexOffset:1000}).addTo(mapRef.current);
     }
-    const address = await reverseGeocode(lat, lng);
-    const suggested = autoDistrict(address, settingsRef.current.districtMappings);
+    const geoResult = await reverseGeocode(lat, lng);
+    const address = geoResult.address;
+    
+    let suggested = autoDistrict(address, settingsRef.current.districtMappings);
+    
+    // settingsや強制ルールで解決しなかった場合、Nominatimの構造化住所(大字・町名)を利用
+    if (!suggested && geoResult.exactPlace) {
+      suggested = geoResult.exactPlace;
+    }
+    // それでもダメなら従来のフルアドレス文字列の先頭部分を抽出する
+    if (!suggested) {
+      suggested = extractDistrictFromAddress(address);
+    }
+    
     const curMode = mapModeRef.current;
-    setDistModal({ lat, lng, address, suggested: suggested || extractDistrictFromAddress(address), mode: curMode });
+    setDistModal({ lat, lng, address, suggested, mode: curMode });
   }, []);
   useEffect(()=>{ handleMapClickRef.current = handleMapClick; }, [handleMapClick]);
 
