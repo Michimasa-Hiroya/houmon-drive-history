@@ -497,7 +497,7 @@ async function exportExcel(settings, records, ym) {
 
   } catch (err) {
     console.error(err);
-    alert("Excel出力でエラーが発生しました。通信環境を確認するか、ページを再読み込みしてください。");
+    alert("エラー詳細: " + err.message + "\n\n(※この画面をスクリーンショットして教えてください)");
   }
 }
 
