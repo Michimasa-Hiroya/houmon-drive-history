@@ -1093,8 +1093,13 @@ function App({ user, onLogout }) {
   const fsSet = useCallback((field, value) => {
     ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
     if (user.isGuest) return;
-    userDocRef.current?.set({ [field]: value }, { merge: true })
-      .catch(err => console.warn("Firestore保存エラー:", err));
+    if (!userDocRef.current) {
+      console.warn("Firestore未初期化 - ローカルのみ保存:", field);
+      return;
+    }
+    userDocRef.current.set({ [field]: value }, { merge: true })
+      .then(() => console.log("Firestore保存OK:", field))
+      .catch(err => console.error("Firestore保存エラー:", field, err));
   }, [user.isGuest, user.uid]);
 
   useEffect(() => { fsSetRef.current = fsSet; }, [fsSet]);
@@ -1116,17 +1121,26 @@ function App({ user, onLogout }) {
   useEffect(()=>{ updateRecRef.current = updateRec; }, [updateRec]);
 
   useEffect(() => {
-    if (user.isGuest) return;
+    if (user.isGuest) {
+      userDocRef.current = null; // ゲスト時はFirestore参照をクリア
+      return;
+    }
     const db = firebase.firestore();
     const ref = db.collection("users").doc(user.uid);
     userDocRef.current = ref;
+    console.log("Firestore初期化: uid=", user.uid);
     ref.get().then(doc => {
-      if (!doc.exists) return;
+      if (!doc.exists) {
+        console.log("Firestoreドキュメントなし（新規ユーザー）");
+        return;
+      }
       const data = doc.data();
+      console.log("Firestore読み込みOK:", Object.keys(data));
       if (data.settings)  { setSettings({ ...DEFAULT_SETTINGS, ...data.settings }); ls.set(cacheKey("settings"), data.settings); }
       if (data.records)   { setRecords(data.records);   ls.set(cacheKey("records"),   data.records); }
       if (data.favorites) { setFavorites(data.favorites); ls.set(cacheKey("favorites"), data.favorites); }
-    }).catch(err => console.warn("Firestore読み込みエラー:", err));
+    }).catch(err => console.error("Firestore読み込みエラー:", err));
+    return () => { userDocRef.current = null; }; // クリーンアップ
   }, [user.uid]);
 
   // ── 地図初期化（一度だけ） ────────────────
