@@ -428,6 +428,8 @@ async function exportExcel(settings, records, ym) {
           rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0);
         totalDist += dist;
         const row = ws.addRow([dateStr, wday, route, dist, rec.startTime||'', rec.endTime||'']);
+        row.getCell(3).alignment = { wrapText: true, vertical: 'top' };
+        row.height = Math.max(15, Math.ceil(route.length / 28) * 15);
         if (dt.getDay()===0) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFF0F0' } };
         if (dt.getDay()===6) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4FF' } };
       } else {
@@ -771,7 +773,7 @@ function PatternModal({ records, date, onApply, onClose }) {
 }
 
 // ── 確認・プレビューモーダル ──────────────────
-function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onCopyText, onClose }) {
+function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onCopyText, onClose, copyMsg }) {
   const base = rec.base?.districtName || settings.defaultBase.districtName;
   const returnBase = rec.returnBase?.districtName || base;
   const stops = rec.stops;
@@ -874,7 +876,7 @@ function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onCopyT
           </div>
           <button onClick={onCopyText}
             className="w-full mt-2 border border-slate-300 bg-slate-50 active:bg-slate-100 text-slate-700 rounded-xl py-3 font-semibold text-sm">
-            📋 月次テキストコピー
+            {copyMsg || '📋 月次テキストコピー'}
           </button>
         </div>
       </div>
@@ -1048,6 +1050,7 @@ function App({ user, onLogout }) {
   const [date, setDate] = useState(todayStr);
   const [showSettings, setShowSettings] = useState(false);
   const [showFavs, setShowFavs] = useState(false);
+  const [insertAfterIdx, setInsertAfterIdx] = useState(null); // null=末尾, 数値=その後に挿入
   const [showPreview, setShowPreview] = useState(false);
   const [showPattern, setShowPattern] = useState(false);
   const [mobileTab, setMobileTab] = useState("list"); // "map" | "list"
@@ -1358,9 +1361,17 @@ function App({ user, onLogout }) {
       return;
     }
 
+    const insertIdx = insertAfterIdx;
+    setInsertAfterIdx(null);
     updateRec(r=>{
       if (r.stops.length >= 10) { alert("最大10件まで追加できます。"); return r; }
-      return { ...r, stops:[...r.stops, newStop] };
+      const s = [...r.stops];
+      if (insertIdx !== null && insertIdx >= 0 && insertIdx < s.length) {
+        s.splice(insertIdx + 1, 0, newStop);
+      } else {
+        s.push(newStop);
+      }
+      return { ...r, stops: s };
     });
     if (saveToFav) addFav({ ...newStop, memo: memo||"" });
   };
@@ -1371,7 +1382,21 @@ function App({ user, onLogout }) {
     const nf = [...favorites,stop]; setFavorites(nf); fsSet("favorites",nf);
   };
   useEffect(()=>{ addFavRef.current = addFav; }); // eslint-disable-line
-  const addFromFav = fav => { setShowFavs(false); updateRec(r=>{ if(r.stops.length>=10){alert("最大10件");return r;} return{...r,stops:[...r.stops,{...fav}]}; }); };
+  const addFromFav = fav => {
+    setShowFavs(false);
+    const idx = insertAfterIdx;
+    setInsertAfterIdx(null);
+    updateRec(r => {
+      if (r.stops.length >= 10) { alert("最大10件"); return r; }
+      const s = [...r.stops];
+      if (idx !== null && idx >= 0 && idx < s.length) {
+        s.splice(idx + 1, 0, { ...fav });
+      } else {
+        s.push({ ...fav });
+      }
+      return { ...r, stops: s };
+    });
+  };
   const delFav = i => {
     if (!confirm(`「${favorites[i]?.districtName}」をお気に入りから削除しますか？`)) return;
     const nf=favorites.filter((_,j)=>j!==i); setFavorites(nf); fsSet("favorites",nf);
@@ -1480,7 +1505,7 @@ function App({ user, onLogout }) {
       const next = { ...prev };
       targets.forEach(([wd, key]) => {
         const src = lastByWday[wd];
-        next[key] = { ...(next[key]||{}), stops: src.stops.map(s=>({...s})), saved:false };
+        next[key] = { ...(next[key]||{}), stops: src.stops.map(s=>({...s})), returnDistance: src.returnDistance||0, totalDistance: src.totalDistance||0, saved:false };
       });
       fsSet('records', next);
       return next;
@@ -1674,6 +1699,13 @@ function App({ user, onLogout }) {
                     {i === 0 ? baseDistrict : rec.stops[i-1].districtName}から {displayLegDist(i)} km
                   </div>
                 )}
+                {rec.stops.length < 10 && (
+                  <button
+                    onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
+                    className="mt-1.5 ml-10 text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
+                    ＋ この後に追加
+                  </button>
+                )}
               </div>
             ))}
 
@@ -1780,6 +1812,7 @@ function App({ user, onLogout }) {
           onExcel={()=>{ const r=saveToday(); exportExcel(settings, r ?? records, date.slice(0,7)); setShowPreview(false); }}
           onCopyText={()=>{ handleCopyText(); }}
           onClose={()=>setShowPreview(false)}
+          copyMsg={copyMsg}
         />
       )}
 
