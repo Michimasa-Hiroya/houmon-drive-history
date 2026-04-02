@@ -1090,7 +1090,7 @@ function App({ user, onLogout }) {
   // ── Firestoreからバックグラウンドで最新データを取得・キャッシュ更新 ──
   const fsSetRef = useRef(null);
 
-  const fsSet = useCallback((field, value) => {
+  const fsSet = (field, value) => {
     ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
     if (user.isGuest) return;
     if (!userDocRef.current) {
@@ -1100,9 +1100,9 @@ function App({ user, onLogout }) {
     userDocRef.current.set({ [field]: value }, { merge: true })
       .then(() => console.log("Firestore保存OK:", field))
       .catch(err => console.error("Firestore保存エラー:", field, err));
-  }, [user.isGuest, user.uid]);
+  };
 
-  useEffect(() => { fsSetRef.current = fsSet; }, [fsSet]);
+  useEffect(() => { fsSetRef.current = fsSet; }); // 毎レンダーで最新のfsSetを保持
 
   // ── レコード更新 ──────────────────────────
   const updateRec = useCallback(fn => {
