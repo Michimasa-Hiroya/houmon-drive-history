@@ -253,6 +253,8 @@ const DEFAULT_SETTINGS = {
   districtMappings: []
 };
 
+const ROUTE_COLORS = ['#3b82f6','#f97316','#8b5cf6','#10b981','#ef4444','#0ea5e9','#ec4899','#eab308'];
+
 // ── localStorage ──────────────────────────────
 const ls = {
   get: (k, d) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):d; } catch { return d; } },
@@ -343,18 +345,31 @@ async function geocodeAddress(addr) {
 async function fetchRoute(waypoints) {
   const coords = waypoints.map(p => `${p.lng},${p.lat}`).join(";");
   const res = await fetch(
-    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/driving/${coords}?steps=true&overview=false&geometries=geojson`,
     { signal: AbortSignal.timeout(10000) }
   );
   if (!res.ok) throw new Error(`OSRM ${res.status}`);
   const d = await res.json();
   if (!d.routes?.length) throw new Error("経路なし");
   const route = d.routes[0];
-  return {
-    legDistances: route.legs.map(l => Math.round(l.distance/100)/10),
-    totalDistance: Math.round(route.distance/100)/10,
-    geometry: route.geometry
-  };
+  // 距離計算は geometry と独立して行う
+  const legDistances = route.legs.map(l => Math.round(l.distance/100)/10);
+  const totalDistance = Math.round(route.distance/100)/10;
+  // geometry 抽出は失敗しても距離に影響しないよう try/catch で保護
+  let legGeometries = [];
+  try {
+    legGeometries = route.legs.map(leg => {
+      const pts = [];
+      (leg.steps || []).forEach((step, si) => {
+        const sc = step.geometry?.coordinates;
+        if (!sc) return;
+        const start = si === 0 ? 0 : 1;
+        sc.slice(start).forEach(([lng,lat]) => pts.push([lat,lng]));
+      });
+      return pts;
+    });
+  } catch(e) { console.warn("geometry抽出失敗(距離は正常):", e); }
+  return { legDistances, totalDistance, legGeometries };
 }
 
 // ── カスタムマーカーアイコン ───────────────
@@ -370,134 +385,93 @@ function makeIcon(label, color) {
 
 // ── Excel 出力 ──────────────────────────────
 async function exportExcel(settings, records, ym) {
-  const [year, month] = ym.split("-").map(Number);
-  const stn = settings.defaultBase.districtName || "訪問看護ステーション灯";
-  const staff = settings.staffName || "";
+  const [year, month] = ym.split('-').map(Number);
+  const staff = settings.staffName || '';
   const rate = settings.vehicleAllowanceRate || 40;
+  const WDAYS = ['日','月','火','水','木','金','土'];
 
   try {
-    // テンプレートファイルを読み込む（同じ階層にある前提）
-    
-    const templateB64 = "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";
-    const binaryString = atob(templateB64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-    }
-    const res = { ok: true, arrayBuffer: async () => bytes.buffer };
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(ym.replace('-','年') + '月');
 
-    if (!res.ok) throw new Error("テンプレートが見つかりません");
-    const arrayBuffer = await res.arrayBuffer();
+    // ヘッダー
+    ws.mergeCells('A1:F1');
+    ws.getCell('A1').value = year + '年' + month + '月　運転日報';
+    ws.getCell('A1').font = { bold:true, size:14 };
+    ws.getCell('A1').alignment = { horizontal:'center' };
 
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(arrayBuffer);
-    const ws = workbook.getWorksheet(1); // シート1
+    ws.mergeCells('A2:F2');
+    ws.getCell('A2').value = '氏名: ' + staff;
+    ws.getCell('A2').font = { size:11 };
 
-    // 年月・事業所・氏名をヘッダーにセット
-    ws.getCell('L1').value = year;
-    ws.getCell('N1').value = month;
-    ws.getCell('L4').value = stn;
-    ws.getCell('R4').value = staff;
+    // 列ヘッダー
+    const headers = ['日付','曜日','行先','走行距離(km)','出勤','退勤'];
+    const hRow = ws.addRow(headers);
+    hRow.font = { bold:true };
+    hRow.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFD0E4FF' } };
+    hRow.alignment = { horizontal:'center' };
 
-    // 平日のみ収集
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const weekdayDates = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      const wd = new Date(ds + "T00:00:00").getDay();
-      if (wd !== 0 && wd !== 6) weekdayDates.push({ d, ds });
-    }
-
-    // データ行(7行目〜31行目)を一度クリア（書式は残す）
-    for (let r = 7; r <= 31; r++) {
-      ws.getCell('B' + r).value = null; // 月
-      ws.getCell('D' + r).value = null; // 日
-      ws.getCell('E' + r).value = null; // 行き先
-      ws.getCell('Q' + r).value = null; // 出時
-      ws.getCell('S' + r).value = null; // 出分
-      ws.getCell('T' + r).value = null; // 〜
-      ws.getCell('U' + r).value = null; // 退時
-      ws.getCell('W' + r).value = null; // 退分
-      ws.getCell('X' + r).value = null; // 距離
-    }
-
-    // 取得した平日データを埋め込む(最大25行)
+    // データ行
+    const days = new Date(year, month, 0).getDate();
     let totalDist = 0;
-    weekdayDates.forEach((info, i) => {
-      const r = 7 + i;
-      if (r > 31) return; // 枠超え防止
-
-      const { d, ds } = info;
-      const rec = records[ds];
-
-      // 月/日
-      ws.getCell('B' + r).value = month;
-      ws.getCell('C' + r).value = "/";
-      ws.getCell('D' + r).value = d;
-
-      if (!rec) return; // データなしの場合は空欄
-
-      const startBase = rec.base?.districtName || stn;
-      const endBase   = rec.returnBase?.districtName || startBase;
-      
-      let route = "";
-      if (rec.stops && rec.stops.length > 0) {
-        const names = rec.stops.map(s => s.districtName || s.address.slice(0, 8));
-        route = [startBase, ...names, endBase].join("→");
-      } else if ((rec.startTime && rec.startTime !== "08:30") || rec.saved) {
-        route = startBase === endBase ? startBase : `${startBase}→${endBase}`;
-      }
-      ws.getCell('E' + r).value = route;
-
-      // 時間
-      if (rec.startTime) {
-        const [sh, sm] = rec.startTime.split(":");
-        ws.getCell('Q' + r).value = Number(sh);
-        ws.getCell('R' + r).value = ":";
-        ws.getCell('S' + r).value = Number(sm);
-      }
-      if (rec.endTime) {
-        const [eh, em] = rec.endTime.split(":");
-        ws.getCell('T' + r).value = "～";
-        ws.getCell('U' + r).value = Number(eh);
-        ws.getCell('V' + r).value = ":";
-        ws.getCell('W' + r).value = Number(em);
-      }
-
-      // 距離
-      const dist = rec.totalDistance > 0 ? rec.totalDistance
-        : (rec.stops && rec.stops.length > 0
-            ? Math.round((rec.stops.reduce((sum, st) => sum + (st.distanceFromPrev || 0), 0) + (rec.returnDistance || 0)) * 10) / 10
-            : 0);
-
-      if (dist > 0) {
-        ws.getCell('X' + r).value = dist;
+    for (let d = 1; d <= days; d++) {
+      const key = year + '-' + String(month).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+      const rec = records[key];
+      const dt = new Date(key + 'T00:00:00');
+      const dateStr = month + '/' + d;
+      const wday = WDAYS[dt.getDay()];
+      if (rec && rec.stops && rec.stops.length > 0) {
+        const base = rec.base?.districtName || settings.defaultBase.districtName || '';
+        const retBase = rec.returnBase?.districtName || base;
+        const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
+        const dist = rec.totalDistance || 0;
         totalDist += dist;
+        const row = ws.addRow([dateStr, wday, route, dist, rec.startTime||'', rec.endTime||'']);
+        if (dt.getDay()===0) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFF0F0' } };
+        if (dt.getDay()===6) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4FF' } };
+      } else {
+        const row = ws.addRow([dateStr, wday, '', '', '', '']);
+        if (dt.getDay()===0) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFF0F0' } };
+        if (dt.getDay()===6) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF0F4FF' } };
+      }
+    }
+
+    // フッター
+    ws.addRow([]);
+    const sumRow = ws.addRow(['月間合計走行距離', '', '', totalDist + ' km', '', '']);
+    sumRow.font = { bold:true };
+    const allowRow = ws.addRow(['車両手当', '', '', Math.round(totalDist * rate) + ' 円', '', '']);
+    allowRow.font = { bold:true };
+
+    // 列幅
+    ws.getColumn(1).width = 10;
+    ws.getColumn(2).width = 6;
+    ws.getColumn(3).width = 42;
+    ws.getColumn(4).width = 14;
+    ws.getColumn(5).width = 10;
+    ws.getColumn(6).width = 10;
+
+    // 罫線（データ部分）
+    ws.eachRow((row, ri) => {
+      if (ri >= 3) {
+        row.eachCell(cell => {
+          cell.border = {
+            top:{ style:'thin' }, bottom:{ style:'thin' },
+            left:{ style:'thin' }, right:{ style:'thin' }
+          };
+        });
       }
     });
 
-    // レートや合計など (32行目周り)
-    ws.getCell('B32').value = rate;
-    // 通常Excel上のSUM関数がX列や計算セルにあるはずなので自動計算されますが、値も万一のため上書き
-    totalDist = Math.round(totalDist * 10) / 10;
-    ws.getCell('X32').value = totalDist;
-
-    const exportBuffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([exportBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = URL.createObjectURL(blob);
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `運転日誌_${year}年${String(month).padStart(2,'0')}月.xlsx`;
-    document.body.appendChild(a);
+    a.href = URL.createObjectURL(blob);
+    a.download = year + '年' + String(month).padStart(2,'0') + '月_運転日報.xlsx';
     a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-
-  } catch (err) {
+  } catch(err) {
     console.error(err);
-    alert("エラー詳細: " + err.message + "\n\n(※この画面をスクリーンショットして教えてください)");
+    alert('Excel出力エラー: ' + err.message);
   }
 }
 
@@ -796,7 +770,7 @@ function PatternModal({ records, date, onApply, onClose }) {
 }
 
 // ── 確認・プレビューモーダル ──────────────────
-function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onClose }) {
+function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onCopyText, onClose }) {
   const base = rec.base?.districtName || settings.defaultBase.districtName;
   const returnBase = rec.returnBase?.districtName || base;
   const stops = rec.stops;
@@ -897,6 +871,10 @@ function PreviewModal({ rec, settings, routeData, date, onSave, onExcel, onClose
               📊 Excel
             </button>
           </div>
+          <button onClick={onCopyText}
+            className="w-full mt-2 border border-slate-300 bg-slate-50 active:bg-slate-100 text-slate-700 rounded-xl py-3 font-semibold text-sm">
+            📋 月次テキストコピー
+          </button>
         </div>
       </div>
     </div>
@@ -1077,7 +1055,7 @@ function App({ user, onLogout }) {
   const [favToast, setFavToast] = useState(null);
   const [favMemoModal, setFavMemoModal] = useState(null);
   const [distModal, setDistModal] = useState(null);
-  const [routeData, setRouteData] = useState({ legDists:[], total:0, geometry:null });
+  const [routeData, setRouteData] = useState({ legDists:[], total:0, legGeometries:[] });
   const [routeErr, setRouteErr] = useState(null);
   const [calcBusy, setCalcBusy] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
@@ -1109,6 +1087,18 @@ function App({ user, onLogout }) {
 
   recRef.current = rec;
 
+  // ── Firestoreからバックグラウンドで最新データを取得・キャッシュ更新 ──
+  const fsSetRef = useRef(null);
+
+  const fsSet = useCallback((field, value) => {
+    ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
+    if (user.isGuest) return;
+    userDocRef.current?.set({ [field]: value }, { merge: true })
+      .catch(err => console.warn("Firestore保存エラー:", err));
+  }, [user.isGuest, user.uid]);
+
+  useEffect(() => { fsSetRef.current = fsSet; }, [fsSet]);
+
   // ── レコード更新 ──────────────────────────
   const updateRec = useCallback(fn => {
     setRecords(prev => {
@@ -1118,12 +1108,13 @@ function App({ user, onLogout }) {
         stops:[], returnDistance:0, totalDistance:0, saved:false
       };
       if (!cur.returnBase) cur.returnBase = cur.base || settingsRef.current.defaultBase;
-      return { ...prev, [date]: fn(cur) };
+      const nextRecords = { ...prev, [date]: fn(cur) };
+      if (fsSetRef.current) fsSetRef.current("records", nextRecords);
+      return nextRecords;
     });
   }, [date]);
   useEffect(()=>{ updateRecRef.current = updateRec; }, [updateRec]);
 
-  // ── Firestoreからバックグラウンドで最新データを取得・キャッシュ更新 ──
   useEffect(() => {
     if (user.isGuest) return;
     const db = firebase.firestore();
@@ -1137,13 +1128,6 @@ function App({ user, onLogout }) {
       if (data.favorites) { setFavorites(data.favorites); ls.set(cacheKey("favorites"), data.favorites); }
     }).catch(err => console.warn("Firestore読み込みエラー:", err));
   }, [user.uid]);
-
-  const fsSet = useCallback((field, value) => {
-    ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
-    if (user.isGuest) return;
-    userDocRef.current?.set({ [field]: value }, { merge: true })
-      .catch(err => console.warn("Firestore保存エラー:", err));
-  }, [user.isGuest, user.uid]);
 
   // ── 地図初期化（一度だけ） ────────────────
   useEffect(()=>{
@@ -1279,7 +1263,7 @@ function App({ user, onLogout }) {
     markersRef.current = [];
     distMarkersRef.current.forEach(m=>m.remove());
     distMarkersRef.current = [];
-    if (routeLineRef.current) { routeLineRef.current.remove(); routeLineRef.current=null; }
+    if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); routeLineRef.current=null; }
 
     const bm = L.marker([r.base.lat,r.base.lng], { icon:makeIcon("発","#059669") })
       .addTo(map).bindPopup(`<b>出発（${r.base.districtName}）</b>`);
@@ -1290,28 +1274,29 @@ function App({ user, onLogout }) {
     markersRef.current.push(em);
 
     r.stops.forEach((s,i)=>{
-      const m = L.marker([s.lat,s.lng], { icon:makeIcon(String(i+1),"#2563EB") })
+      const m = L.marker([s.lat,s.lng], { icon:makeIcon(String(i+1),ROUTE_COLORS[i % ROUTE_COLORS.length]) })
         .addTo(map).bindPopup(`<b>${i+1}: ${s.districtName}</b><br/><small>${s.address.slice(0,35)}</small>`);
       markersRef.current.push(m);
     });
 
     if (r.stops.length === 0 && r.base.lat === r.returnBase.lat && r.base.lng === r.returnBase.lng) {
-      setRouteData({ legDists:[], total:0, geometry:null });
+      setRouteData({ legDists:[], total:0, legGeometries:[] });
       return;
     }
 
     const waypoints = [r.base, ...r.stops, r.returnBase];
     let cancelled = false;
     setCalcBusy(true); setRouteErr(null);
-    fetchRoute(waypoints).then(({ legDistances, totalDistance, geometry })=>{
+    fetchRoute(waypoints).then(({ legDistances, totalDistance, legGeometries })=>{
       if (cancelled) return;
-      setRouteData({ legDists:legDistances, total:totalDistance, geometry });
+      setRouteData({ legDists:legDistances, total:totalDistance, legGeometries });
       setCalcBusy(false);
       const m = mapRef.current;
-      if (geometry && m) {
-        const coords = geometry.coordinates.map(([lng,lat])=>[lat,lng]);
-        if (routeLineRef.current) routeLineRef.current.remove();
-        routeLineRef.current = L.polyline(coords, { color:'#2563EB', weight:4, opacity:0.75 }).addTo(m);
+      if (legGeometries && legGeometries.length > 0 && m) {
+        if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); }
+        routeLineRef.current = legGeometries.map((pts, i) =>
+          L.polyline(pts, { color:ROUTE_COLORS[i % ROUTE_COLORS.length], weight:2, opacity:0.85 }).addTo(m)
+        );
         // 区間距離ラベルをルート中間点に表示
         distMarkersRef.current.forEach(mk=>mk.remove());
         distMarkersRef.current = [];
@@ -1321,10 +1306,11 @@ function App({ user, onLogout }) {
           const midLat = (prev.lat + wp.lat) / 2;
           const midLng = (prev.lng + wp.lng) / 2;
           const dist = legDistances[i-1];
+          const col = ROUTE_COLORS[(i-1) % ROUTE_COLORS.length];
           if (dist > 0) {
             const lbl = L.marker([midLat, midLng], {
               icon: L.divIcon({
-                html: `<div style="background:white;border:2px solid #2563EB;border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;color:#2563EB;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">${dist} km</div>`,
+                html: `<div style="background:white;border:2px solid ${col};border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;color:${col};white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">${dist} km</div>`,
                 className: "", iconSize: null, iconAnchor: [28, 10]
               }),
               interactive: false, zIndexOffset: -100
@@ -1418,6 +1404,80 @@ function App({ user, onLogout }) {
   const handleSaveSettings = ns => {
     setSettings(ns); fsSet("settings",ns);
     if (mapRef.current) mapRef.current.setView([ns.defaultBase.lat,ns.defaultBase.lng],13);
+  };
+
+  // ── テキストコピー ───────────────────────────
+  const [copyMsg, setCopyMsg] = React.useState('');
+  const handleCopyText = () => {
+    const ym = date.slice(0,7);
+    const [year, month] = ym.split('-').map(Number);
+    const days = new Date(year, month, 0).getDate();
+    const WDAYS = ['日','月','火','水','木','金','土'];
+    let lines = [year + '年' + month + '月 運転日報（' + (settings.staffName||'') + ')'];
+    let total = 0;
+    for (let d = 1; d <= days; d++) {
+      const key = ym + '-' + String(d).padStart(2,'0');
+      const rec = records[key];
+      if (!rec || !rec.stops || rec.stops.length === 0) continue;
+      const dt = new Date(key + 'T00:00:00');
+      const base = rec.base?.districtName || settings.defaultBase.districtName || '';
+      const retBase = rec.returnBase?.districtName || base;
+      const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
+      const dist = rec.totalDistance || 0;
+      total += dist;
+      lines.push(month + '/' + d + '(' + WDAYS[dt.getDay()] + ')  ' + route + '  ' + dist + 'km');
+    }
+    lines.push('──────────────────────────');
+    lines.push('月間合計: ' + total + ' km  車両手当: ¥' + Math.round(total * (settings.vehicleAllowanceRate||40)));
+    navigator.clipboard.writeText(lines.join('\n')).then(()=>{
+      setCopyMsg('✅ コピーしました'); setTimeout(()=>setCopyMsg(''), 2000);
+    }).catch(()=>alert('コピーに失敗しました'));
+  };
+
+  // ── 先月最終週→今月第1週コピー ────────────────
+  const handleCopyFromLastMonth = () => {
+    const [y, m] = date.slice(0,7).split('-').map(Number);
+    const prevYear = m === 1 ? y - 1 : y;
+    const prevMonth = m === 1 ? 12 : m - 1;
+    const prevYm = prevYear + '-' + String(prevMonth).padStart(2,'0');
+    const prevDays = new Date(prevYear, prevMonth, 0).getDate();
+    // 曜日1(月)〜5(金)ごとに先月最後の日を探す
+    const lastByWday = {};
+    for (let d = prevDays; d >= 1; d--) {
+      const key = prevYm + '-' + String(d).padStart(2,'0');
+      const dt = new Date(key + 'T00:00:00');
+      const wd = dt.getDay();
+      if (wd >= 1 && wd <= 5 && !lastByWday[wd] && records[key]?.stops?.length > 0) {
+        lastByWday[wd] = records[key];
+      }
+    }
+    if (Object.keys(lastByWday).length === 0) {
+      alert('先月の訪問データが見つかりませんでした'); return;
+    }
+    // 今月第1週の同曜日を探す
+    const curYm = y + '-' + String(m).padStart(2,'0');
+    const curDays = new Date(y, m, 0).getDate();
+    const firstByWday = {};
+    for (let d = 1; d <= 7 && d <= curDays; d++) {
+      const key = curYm + '-' + String(d).padStart(2,'0');
+      const dt = new Date(key + 'T00:00:00');
+      const wd = dt.getDay();
+      if (wd >= 1 && wd <= 5) firstByWday[wd] = key;
+    }
+    const targets = Object.entries(firstByWday).filter(([wd, key]) => lastByWday[wd]);
+    if (targets.length === 0) { alert('コピー対象が見つかりませんでした'); return; }
+    const hasExisting = targets.some(([,key]) => records[key]?.stops?.length > 0);
+    if (hasExisting && !window.confirm(targets.length + '日分のデータをコピーします。既存データは上書きされます。よろしいですか？')) return;
+    setRecords(prev => {
+      const next = { ...prev };
+      targets.forEach(([wd, key]) => {
+        const src = lastByWday[wd];
+        next[key] = { ...(next[key]||{}), stops: src.stops.map(s=>({...s})), saved:false };
+      });
+      fsSet('records', next);
+      return next;
+    });
+    setSaveMsg('先月最終週をコピーしました！'); setTimeout(()=>setSaveMsg(''), 2500);
   };
 
   // ── 月次パターン反映 ─────────────────────────
@@ -1679,6 +1739,11 @@ function App({ user, onLogout }) {
               );
             })()}
 
+            {/* 先月最終週コピーボタン */}
+            <button onClick={handleCopyFromLastMonth}
+              className="w-full border border-teal-300 bg-teal-50 active:bg-teal-100 text-teal-700 rounded-xl py-2.5 text-sm font-semibold mb-2">
+              📥 先月最終週→今月第1週へコピー
+            </button>
             {/* 月次パターン反映ボタン */}
             <button onClick={()=>setShowPattern(true)}
               className="w-full border border-indigo-300 bg-indigo-50 active:bg-indigo-100 text-indigo-700 rounded-xl py-2.5 text-sm font-semibold">
@@ -1705,6 +1770,7 @@ function App({ user, onLogout }) {
           rec={rec} settings={settings} routeData={routeData} date={date}
           onSave={()=>{ saveToday(); setShowPreview(false); }}
           onExcel={()=>{ const r=saveToday(); exportExcel(settings, r ?? records, date.slice(0,7)); setShowPreview(false); }}
+          onCopyText={()=>{ handleCopyText(); }}
           onClose={()=>setShowPreview(false)}
         />
       )}
