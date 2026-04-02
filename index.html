@@ -424,7 +424,8 @@ async function exportExcel(settings, records, ym) {
         const base = rec.base?.districtName || settings.defaultBase.districtName || '';
         const retBase = rec.returnBase?.districtName || base;
         const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
-        const dist = rec.totalDistance || 0;
+        const dist = rec.totalDistance ||
+          rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0);
         totalDist += dist;
         const row = ws.addRow([dateStr, wday, route, dist, rec.startTime||'', rec.endTime||'']);
         if (dt.getDay()===0) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFF0F0' } };
@@ -1076,12 +1077,14 @@ function App({ user, onLogout }) {
 
   // ── 当日レコード ──────────────────────────
   const rec = useMemo(()=>{
+    const base = settings.defaultBase || { lat:43.04, lng:144.36, address:"", districtName:"" };
     const r = records[date] || {
       date, startTime:"08:30", endTime:"17:30",
-      base: settings.defaultBase,
-      stops:[], returnDistance:0, totalDistance:0, saved:false
+      base, stops:[], returnDistance:0, totalDistance:0, saved:false
     };
-    if (!r.returnBase) r.returnBase = r.base || settings.defaultBase;
+    // base/returnBase が欠損している場合も安全にフォールバック
+    if (!r.base) r.base = base;
+    if (!r.returnBase) r.returnBase = r.base;
     return r;
   }, [records, date, settings.defaultBase]);
 
@@ -1427,7 +1430,8 @@ function App({ user, onLogout }) {
       const base = rec.base?.districtName || settings.defaultBase.districtName || '';
       const retBase = rec.returnBase?.districtName || base;
       const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
-      const dist = rec.totalDistance || 0;
+      const dist = rec.totalDistance ||
+        rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0);
       total += dist;
       lines.push(month + '/' + d + '(' + WDAYS[dt.getDay()] + ')  ' + route + '  ' + dist + 'km');
     }
