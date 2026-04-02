@@ -1091,10 +1091,11 @@ function App({ user, onLogout }) {
   const fsSetRef = useRef(null);
 
   const fsSet = (field, value) => {
-    ls.set(cacheKey(field), value); // 常にローカルキャッシュに保存
-    if (user.isGuest) return;
+    console.log("fsSet呼ばれた:", field, "isGuest:", user.isGuest, "docRef:", !!userDocRef.current);
+    ls.set(cacheKey(field), value);
+    if (user.isGuest) { console.log("fsSet: ゲストのためスキップ"); return; }
     if (!userDocRef.current) {
-      console.warn("Firestore未初期化 - ローカルのみ保存:", field);
+      console.warn("fsSet: userDocRef null - ローカルのみ保存:", field);
       return;
     }
     userDocRef.current.set({ [field]: value }, { merge: true })
