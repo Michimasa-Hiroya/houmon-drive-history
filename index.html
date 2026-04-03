@@ -1505,11 +1505,19 @@ function App({ user, onLogout }) {
     distMarkersRef.current = [];
     if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); routeLineRef.current=null; }
 
-    const bm = L.marker([r.base.lat,r.base.lng], { icon:makeIcon("発","#059669") })
+    // 出発と帰宅が同座標の場合、左右にずらして両方見えるようにする
+    const sameBase = r.base.lat === r.returnBase.lat && r.base.lng === r.returnBase.lng;
+    const OFFSET = 0.00012; // 約13m
+    const baseLat  = sameBase ? r.base.lat      : r.base.lat;
+    const baseLng  = sameBase ? r.base.lng - OFFSET : r.base.lng;
+    const retLat   = sameBase ? r.returnBase.lat : r.returnBase.lat;
+    const retLng   = sameBase ? r.returnBase.lng + OFFSET : r.returnBase.lng;
+
+    const bm = L.marker([baseLat, baseLng], { icon:makeIcon("発","#059669") })
       .addTo(map).bindPopup(`<b>出発（${r.base.districtName}）</b>`);
     markersRef.current.push(bm);
 
-    const em = L.marker([r.returnBase.lat,r.returnBase.lng], { icon:makeIcon("帰","#475569") })
+    const em = L.marker([retLat, retLng], { icon:makeIcon("帰","#475569") })
       .addTo(map).bindPopup(`<b>到着（${r.returnBase.districtName}）</b>`);
     markersRef.current.push(em);
 
