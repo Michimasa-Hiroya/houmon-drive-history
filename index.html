@@ -344,25 +344,38 @@ async function geocodeAddress(addr) {
 
 // ── ルート線を垂直方向にずらす（重なり解消） ─────────
 // offsetMeters: プラス=右側, マイナス=左側
-function applyPolylineOffset(pts, offsetMeters) {
-  if (!pts || pts.length < 2 || Math.abs(offsetMeters) < 0.001) return pts;
-  const LAT_PER_M = 1 / 111320;
+// ピクセル単位でポリラインを法線方向にずらす（縮尺に依存しない確実なオフセット）
+function applyPolylineOffsetPx(map, pts, offsetPx) {
+  if (!pts || pts.length < 2 || Math.abs(offsetPx) < 0.001) return pts;
   return pts.map((pt, i) => {
-    // 接線ベクトルを前後の点から計算
     const a = i > 0 ? pts[i - 1] : pts[i];
     const b = i < pts.length - 1 ? pts[i + 1] : pts[i];
-    const cosLat = Math.cos(pt[0] * Math.PI / 180);
-    const tx = (b[0] - a[0]) * 111320;
-    const ty = (b[1] - a[1]) * 111320 * cosLat;
+    // スクリーン座標で接線ベクトルを計算
+    const pa = map.latLngToContainerPoint(L.latLng(a[0], a[1]));
+    const pb = map.latLngToContainerPoint(L.latLng(b[0], b[1]));
+    const tx = pb.x - pa.x;
+    const ty = pb.y - pa.y;
     const len = Math.sqrt(tx * tx + ty * ty) || 1;
-    // 90° 回転して法線ベクトルを作成
-    const nx = -ty / len;
-    const ny =  tx / len;
-    return [
-      pt[0] + nx * offsetMeters * LAT_PER_M,
-      pt[1] + ny * offsetMeters / (111320 * cosLat),
-    ];
+    // 法線（90°回転）でoffsetPxだけずらした画面座標
+    const pc = map.latLngToContainerPoint(L.latLng(pt[0], pt[1]));
+    const nx = -ty / len * offsetPx;
+    const ny =  tx / len * offsetPx;
+    const shifted = map.containerPointToLatLng(L.point(pc.x + nx, pc.y + ny));
+    return [shifted.lat, shifted.lng];
   });
+}
+
+// ── ルート線を地図に描画（ズーム変更後も再利用） ──
+const ROUTE_LINES_REF = { current: null }; // モジュールスコープのref（useRef代替）
+function drawRouteLines(map, legGeometries) {
+  if (ROUTE_LINES_REF.current) { ROUTE_LINES_REF.current.forEach(l => l.remove()); }
+  const n = legGeometries.length;
+  ROUTE_LINES_REF.current = legGeometries.map((pts, i) => {
+    const offsetPx = n > 1 ? (i - (n - 1) / 2) * 4 : 0;
+    const offsetPts = applyPolylineOffsetPx(map, pts, offsetPx);
+    return L.polyline(offsetPts, { color: ROUTE_COLORS[i % ROUTE_COLORS.length], weight: 3, opacity: 0.9 }).addTo(map);
+  });
+  return ROUTE_LINES_REF.current;
 }
 
 // ── OSRM 経路計算 ─────────────────────────
@@ -1299,6 +1312,7 @@ function App({ user, onLogout }) {
   const mapRef = useRef(null);
   const markersRef = useRef([]);
   const routeLineRef = useRef(null);
+  const legGeometriesRef = useRef([]); // ズーム後の再描画用
   const distMarkersRef = useRef([]);
   const pendingMarkerRef = useRef(null); // 長押し時の仮ピン
   const settingsRef = useRef(settings);
@@ -1392,6 +1406,13 @@ function App({ user, onLogout }) {
       bounds: KUSHIRO_BOUNDS   // 範囲外のタイルは読み込まない
     }).addTo(map);
     mapRef.current = map;
+
+    // ── ズーム後にルート線を再描画（ピクセルオフセット補正） ──
+    map.on('zoomend', () => {
+      if (legGeometriesRef.current.length > 0) {
+        drawRouteLines(map, legGeometriesRef.current);
+      }
+    });
 
     // ── 長押し検出（デスクトップ: mousedown） ──
     let pressTimer = null;
@@ -1504,6 +1525,7 @@ function App({ user, onLogout }) {
     distMarkersRef.current.forEach(m=>m.remove());
     distMarkersRef.current = [];
     if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); routeLineRef.current=null; }
+    legGeometriesRef.current = [];
 
     // 出発と帰宅が同座標の場合、左右にずらして両方見えるようにする
     const sameBase = r.base.lat === r.returnBase.lat && r.base.lng === r.returnBase.lng;
@@ -1548,14 +1570,8 @@ function App({ user, onLogout }) {
       setCalcBusy(false);
       const m = mapRef.current;
       if (legGeometries && legGeometries.length > 0 && m) {
-        if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); }
-        const n = legGeometries.length;
-        // 6レグなら -7.5, -4.5, -1.5, +1.5, +4.5, +7.5 m ずらして全線を独立表示
-        routeLineRef.current = legGeometries.map((pts, i) => {
-          const offsetM = n > 1 ? (i - (n - 1) / 2) * 3 : 0;
-          const offsetPts = applyPolylineOffset(pts, offsetM);
-          return L.polyline(offsetPts, { color:ROUTE_COLORS[i % ROUTE_COLORS.length], weight:3, opacity:0.9 }).addTo(m);
-        });
+        legGeometriesRef.current = legGeometries;
+        routeLineRef.current = drawRouteLines(m, legGeometries);
         // 区間距離ラベルをルート中間点に表示
         distMarkersRef.current.forEach(mk=>mk.remove());
         distMarkersRef.current = [];
