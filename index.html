@@ -346,30 +346,40 @@ async function geocodeAddress(addr) {
 // ── OSRM 経路計算 ─────────────────────────
 async function fetchRoute(waypoints) {
   const coords = waypoints.map(p => `${p.lng},${p.lat}`).join(";");
+  // overview=full でルート全体の連続したジオメトリを取得（stepジオメトリはラウンドアバウット円弧を含むため使わない）
   const res = await fetch(
-    `https://router.project-osrm.org/route/v1/driving/${coords}?steps=true&overview=false&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
     { signal: AbortSignal.timeout(10000) }
   );
   if (!res.ok) throw new Error(`OSRM ${res.status}`);
   const d = await res.json();
   if (!d.routes?.length) throw new Error("経路なし");
   const route = d.routes[0];
-  // 距離計算は geometry と独立して行う
   const legDistances = route.legs.map(l => Math.round(l.distance/100)/10);
   const totalDistance = Math.round(route.distance/100)/10;
-  // geometry 抽出は失敗しても距離に影響しないよう try/catch で保護
+  // ルート全体のgeometryをウェイポイント位置で分割してleg別に色分け
   let legGeometries = [];
   try {
-    legGeometries = route.legs.map(leg => {
-      const pts = [];
-      (leg.steps || []).forEach((step, si) => {
-        const sc = step.geometry?.coordinates;
-        if (!sc) return;
-        const start = si === 0 ? 0 : 1;
-        sc.slice(start).forEach(([lng,lat]) => pts.push([lat,lng]));
-      });
-      return pts;
-    });
+    const allCoords = route.geometry.coordinates; // [[lng,lat], ...]
+    // 中間ウェイポイント（出発・到着を除く）に最も近いインデックスで分割
+    const splitAt = [0];
+    for (let w = 1; w < waypoints.length - 1; w++) {
+      const wp = waypoints[w];
+      let minD = Infinity, minIdx = splitAt[splitAt.length - 1];
+      for (let i = splitAt[splitAt.length - 1]; i < allCoords.length; i++) {
+        const dx = allCoords[i][0] - wp.lng;
+        const dy = allCoords[i][1] - wp.lat;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < minD) { minD = d2; minIdx = i; }
+      }
+      splitAt.push(minIdx);
+    }
+    splitAt.push(allCoords.length - 1);
+    for (let i = 0; i < legDistances.length; i++) {
+      legGeometries.push(
+        allCoords.slice(splitAt[i], splitAt[i + 1] + 1).map(([lng, lat]) => [lat, lng])
+      );
+    }
   } catch(e) { console.warn("geometry抽出失敗(距離は正常):", e); }
   return { legDistances, totalDistance, legGeometries };
 }
@@ -1172,6 +1182,7 @@ function App({ user, onLogout }) {
   const [showHelp, setShowHelp] = useState(false);
   const [showFavs, setShowFavs] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState(null); // null=末尾, 数値=その後に挿入
+  const [showMapHint, setShowMapHint] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showPattern, setShowPattern] = useState(false);
   const [mobileTab, setMobileTab] = useState("list"); // "map" | "list"
@@ -1549,17 +1560,25 @@ function App({ user, onLogout }) {
     dragIdx.current=null;
   };
 
-  // ── 保存（更新済み records を返す） ──────────
+  // ── 保存（全日付の変更を一括保存） ──────────
   const saveToday = () => {
     const { legDists, total } = routeData;
     const cur = records[date] || rec;
+    // 現在日付：routeData の距離を反映して saved:true
     const newStops = cur.stops.map((s,i)=>({ ...s, distanceFromPrev: legDists[i]||0 }));
     const returnDist = legDists[cur.stops.length] || 0;
-    const updated = { ...cur, stops:newStops, returnDistance:returnDist, totalDistance:total, saved:true };
-    const saved = { ...records, [date]:updated };
+    const updatedCur = { ...cur, stops:newStops, returnDistance:returnDist, totalDistance:total, saved:true };
+    // 全日付：訪問先がある日は saved:true に
+    const saved = {};
+    Object.keys(records).forEach(k => {
+      const r = records[k];
+      saved[k] = (r?.stops?.length > 0) ? { ...r, saved: true } : r;
+    });
+    saved[date] = updatedCur;
     setRecords(saved);
     fsSet("records", saved);
-    setSaveMsg("保存しました！"); setTimeout(()=>setSaveMsg(""),2500);
+    const count = Object.values(saved).filter(r=>r?.stops?.length>0).length;
+    setSaveMsg(`${count}日分を保存しました！`); setTimeout(()=>setSaveMsg(""),2500);
     return saved; // Excel 出力用
   };
 
@@ -1750,6 +1769,11 @@ function App({ user, onLogout }) {
             <div className="press-ripple" style={{ left:ripple.x, top:ripple.y }} />
           )}
 
+          {showMapHint && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white rounded-full px-4 py-2.5 shadow-lg text-sm font-bold z-30 whitespace-nowrap animate-bounce">
+              📍 地図を長押しして訪問先を選んでください
+            </div>
+          )}
           {calcBusy && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 rounded-full px-4 py-2 shadow-lg text-sm text-blue-700 font-medium z-30 whitespace-nowrap">
               📡 経路計算中...
@@ -1836,12 +1860,12 @@ function App({ user, onLogout }) {
                     <button
                       onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
                       className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
-                      ☆ お気に入り
+                      お気に入りから追加
                     </button>
                     <button
-                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); }}
+                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); setTimeout(()=>setShowMapHint(false),4000); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
                       className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
-                      📍 地図から
+                      地図から追加
                     </button>
                   </div>
                 )}
@@ -1850,10 +1874,16 @@ function App({ user, onLogout }) {
 
             {/* お気に入りから追加 */}
             {rec.stops.length < 10 && (
-              <button onClick={()=>setShowFavs(true)}
-                className="w-full border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500 mb-2">
-                ☆ お気に入りから追加
-              </button>
+              <div className="flex gap-2 mb-2">
+                <button onClick={()=>setShowFavs(true)}
+                  className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
+                  ☆ お気に入りから追加
+                </button>
+                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); setTimeout(()=>setShowMapHint(false),4000); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
+                  className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
+                  📍 地図から追加
+                </button>
+              </div>
             )}
 
             {/* 帰社 */}
