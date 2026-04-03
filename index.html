@@ -494,6 +494,108 @@ async function exportExcel(settings, records, ym) {
 // コンポーネント群
 // ══════════════════════════════════════════════
 
+// ── ヘルプモーダル ────────────────────────────
+function HelpModal({ onClose }) {
+  const steps = [
+    {
+      icon: "📅",
+      title: "日付を選ぶ",
+      desc: "ヘッダーの「‹ ›」で前後の日に移動できます。日付部分をタップするとカレンダーから直接選べます。「今日」ボタンで今日に戻れます。",
+    },
+    {
+      icon: "📍",
+      title: "訪問先を追加する",
+      desc: "地図を長押しすると仮ピンが立ちます。指を離したら地区名を入力して「追加」を押します。よく行く場所は「お気に入りにも保存」にチェックを入れておくと次回から簡単に選べます。",
+    },
+    {
+      icon: "☆",
+      title: "お気に入りから追加する",
+      desc: "リスト下部の「☆ お気に入りから追加」ボタンから登録済みの場所をタップするだけで追加できます。2件目以降を途中に挿入したいときは、各訪問先カードの「☆ お気に入り」「📍 地図から」ボタンを使います。",
+    },
+    {
+      icon: "↕️",
+      title: "順番を並び替える",
+      desc: "訪問先カードをドラッグ（長押しして上下に動かす）すると順番を入れ替えられます。",
+    },
+    {
+      icon: "🗺️",
+      title: "ルートを確認する",
+      desc: "訪問先を追加すると地図に色分けされたルートが自動表示されます。区間ごとの距離ラベルも表示されます。地図タブに切り替えて確認しましょう。",
+    },
+    {
+      icon: "💾",
+      title: "保存する",
+      desc: "「確認・出力」ボタン → 「保存」を押すとその日のデータが記録されます。Googleアカウントでログインしている場合はクラウドにも自動保存されます。",
+    },
+    {
+      icon: "📊",
+      title: "Excelに出力する",
+      desc: "「確認・出力」→「Excel」を押すと月全体の運転日報をExcelファイルでダウンロードできます。走行距離・出退勤時間・車両手当・ガソリン代が自動計算されます。",
+    },
+    {
+      icon: "📋",
+      title: "月次テキストコピー",
+      desc: "「確認・出力」→「月次テキストコピー」で月全体の日報をテキスト形式でクリップボードにコピーできます。報告書などに貼り付けて使えます。",
+    },
+    {
+      icon: "📥",
+      title: "先月のデータを引き継ぐ",
+      desc: "「📥 先月最終週→今月第1週へコピー」ボタンを使うと、先月と同じ曜日の訪問先を今月の第1週に一括コピーできます。毎月同じコースの方に便利です。",
+    },
+    {
+      icon: "⚙️",
+      title: "設定を変更する",
+      desc: "右上の⚙️ボタンから事業所住所・スタッフ名・交通費単価・ガソリン価格・燃費を設定できます。これらはExcel出力に反映されます。",
+    },
+  ];
+
+  return (
+    <div className="modal-backdrop fixed inset-0 bg-black/50 z-[2000] flex items-center justify-center p-3">
+      <div className="modal-card bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col" style={{maxHeight:"90dvh"}}>
+        {/* ヘッダー */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">使い方ガイド</h2>
+            <p className="text-xs text-slate-400 mt-0.5">訪問看護 運転日報の基本操作</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-slate-600 text-2xl rounded-xl active:bg-slate-100">×</button>
+        </div>
+
+        {/* ステップ一覧 */}
+        <div className="overflow-y-auto px-5 py-3 flex-1">
+          {steps.map((s, i) => (
+            <div key={i} className="flex gap-3 mb-4 last:mb-1">
+              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center text-xl flex-shrink-0 mt-0.5">{s.icon}</div>
+              <div className="flex-1">
+                <div className="font-bold text-sm text-slate-800 mb-0.5">
+                  <span className="text-blue-400 text-xs font-bold mr-1.5">{i+1}</span>{s.title}
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">{s.desc}</p>
+              </div>
+            </div>
+          ))}
+
+          {/* ヒント */}
+          <div className="mt-3 mb-2 bg-amber-50 border border-amber-200 rounded-xl p-3">
+            <div className="text-xs font-bold text-amber-700 mb-1">💡 ヒント</div>
+            <ul className="text-xs text-amber-700 space-y-1 leading-relaxed">
+              <li>・訪問先は最大10件まで登録できます</li>
+              <li>・ルートは訪問先を追加した時点で自動計算されます</li>
+              <li>・Googleログインでスマホ・PCどちらからでもデータを確認できます</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="px-5 pb-5 pt-3 flex-shrink-0 border-t border-slate-100">
+          <button onClick={onClose} className="w-full bg-blue-600 text-white rounded-xl py-3 font-bold active:bg-blue-700">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 設定モーダル ──────────────────────────────
 function SettingsModal({ settings, onSave, onClose }) {
   const [f, setF] = useState({
@@ -1067,6 +1169,7 @@ function App({ user, onLogout }) {
   const userDocRef = useRef(null);
   const [date, setDate] = useState(todayStr);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [showFavs, setShowFavs] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState(null); // null=末尾, 数値=その後に挿入
   const [showPreview, setShowPreview] = useState(false);
@@ -1610,6 +1713,8 @@ function App({ user, onLogout }) {
         </div>
 
         <div className="flex items-center gap-1">
+          <button onClick={()=>setShowHelp(true)}
+            className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-blue-800 font-bold text-base" title="使い方">?</button>
           <button onClick={()=>setShowSettings(true)}
             className="w-10 h-10 flex items-center justify-center rounded-xl active:bg-blue-800 text-lg" title="設定">⚙️</button>
           {user?.photoURL
@@ -1835,6 +1940,7 @@ function App({ user, onLogout }) {
 
       {/* ── モーダル群 ── */}
       {showPattern && <PatternModal records={records} date={date} onApply={handleApplyPattern} onClose={()=>setShowPattern(false)} />}
+      {showHelp && <HelpModal onClose={()=>setShowHelp(false)} />}
       {showSettings && <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setShowSettings(false)} />}
       {showBaseEdit && <BaseModal mode={showBaseEdit} current={showBaseEdit==="start" ? rec.base : rec.returnBase} favorites={favorites} onSave={handleBaseChange} onClose={()=>setShowBaseEdit(null)} />}
       {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); }} />}
