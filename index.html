@@ -138,6 +138,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-polylineoffset@1.1.1/leaflet.polylineoffset.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
 
 <!-- Firebase compat SDK -->
@@ -250,6 +251,7 @@ const DEFAULT_SETTINGS = {
   staffName: "",
   vehicleAllowanceRate: 40,
   gasPrice: 170,
+  fuelEfficiency: 15,
   districtMappings: []
 };
 
@@ -388,6 +390,8 @@ async function exportExcel(settings, records, ym) {
   const [year, month] = ym.split('-').map(Number);
   const staff = settings.staffName || '';
   const rate = settings.vehicleAllowanceRate || 40;
+  const gasPrice = settings.gasPrice || 170;
+  const fuelEfficiency = settings.fuelEfficiency || 15;
   const WDAYS = ['日','月','火','水','木','金','土'];
 
   try {
@@ -424,10 +428,14 @@ async function exportExcel(settings, records, ym) {
         const base = rec.base?.districtName || settings.defaultBase.districtName || '';
         const retBase = rec.returnBase?.districtName || base;
         const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
-        const dist = rec.totalDistance ||
-          rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0);
-        totalDist += dist;
-        const row = ws.addRow([dateStr, wday, route, dist, rec.startTime||'', rec.endTime||'']);
+        // 走行距離：totalDistance → distanceFromPrev合計 → 0 の優先順で取得
+        const stopSum = rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0);
+        const retDist = rec.returnDistance || 0;
+        const dist = rec.totalDistance > 0
+          ? rec.totalDistance
+          : (stopSum + retDist > 0 ? Math.round((stopSum + retDist)*10)/10 : 0);
+        if (dist > 0) totalDist = Math.round((totalDist + dist) * 10) / 10;
+        const row = ws.addRow([dateStr, wday, route, dist || '', rec.startTime||'', rec.endTime||'']);
         row.getCell(3).alignment = { wrapText: true, vertical: 'top' };
         row.height = Math.max(15, Math.ceil(route.length / 28) * 15);
         if (dt.getDay()===0) row.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFF0F0' } };
@@ -440,11 +448,15 @@ async function exportExcel(settings, records, ym) {
     }
 
     // フッター
+    const displayTotal = Math.round(totalDist * 10) / 10;
+    const gasCost = fuelEfficiency > 0 ? Math.round(displayTotal / fuelEfficiency * gasPrice) : 0;
     ws.addRow([]);
-    const sumRow = ws.addRow(['月間合計走行距離', '', '', totalDist + ' km', '', '']);
+    const sumRow = ws.addRow(['月間合計走行距離', '', '', displayTotal + ' km', '', '']);
     sumRow.font = { bold:true };
-    const allowRow = ws.addRow(['車両手当', '', '', Math.round(totalDist * rate) + ' 円', '', '']);
+    const allowRow = ws.addRow(['車両手当', '', '', Math.round(displayTotal * rate) + ' 円', '', '']);
     allowRow.font = { bold:true };
+    const gasRow = ws.addRow(['月間ガソリン代概算', '', '', gasCost + ' 円', '', '']);
+    gasRow.font = { bold:true };
 
     // 列幅
     ws.getColumn(1).width = 10;
@@ -490,6 +502,7 @@ function SettingsModal({ settings, onSave, onClose }) {
     baseDistrict: settings.defaultBase.districtName,
     rate: settings.vehicleAllowanceRate,
     gasPrice: settings.gasPrice === undefined ? 170 : settings.gasPrice,
+    fuelEfficiency: settings.fuelEfficiency === undefined ? 15 : settings.fuelEfficiency,
   });
   const [busy, setBusy] = useState(false);
 
@@ -502,7 +515,7 @@ function SettingsModal({ settings, onSave, onClose }) {
       base = { lat:r.lat, lng:r.lng, address:f.baseAddress, districtName:f.baseDistrict };
     }
     onSave({ ...settings, staffName:f.staffName,
-      vehicleAllowanceRate:Number(f.rate), gasPrice:Number(f.gasPrice), defaultBase:base });
+      vehicleAllowanceRate:Number(f.rate), gasPrice:Number(f.gasPrice), fuelEfficiency:Number(f.fuelEfficiency), defaultBase:base });
     setBusy(false); onClose();
   };
 
@@ -530,7 +543,7 @@ function SettingsModal({ settings, onSave, onClose }) {
             <input className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={f.baseDistrict} placeholder="訪問看護ステーション灯" onChange={e=>setF(v=>({...v,baseDistrict:e.target.value}))} />
           </div>
-          <div className="flex gap-3 mb-5">
+          <div className="flex gap-3 mb-4">
             <div className="flex-1">
               <label className="block text-sm font-medium text-slate-600 mb-1">交通費単価（円/km）</label>
               <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -541,6 +554,11 @@ function SettingsModal({ settings, onSave, onClose }) {
               <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={f.gasPrice} onChange={e=>setF(v=>({...v,gasPrice:e.target.value}))} />
             </div>
+          </div>
+          <div className="mb-5">
+            <label className="block text-sm font-medium text-slate-600 mb-1">燃費（km/L）</label>
+            <input type="number" className="w-full border border-slate-300 rounded-xl px-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={f.fuelEfficiency} onChange={e=>setF(v=>({...v,fuelEfficiency:e.target.value}))} />
           </div>
 
           <div className="flex gap-3 pt-4 border-t">
@@ -1300,13 +1318,22 @@ function App({ user, onLogout }) {
     fetchRoute(waypoints).then(({ legDistances, totalDistance, legGeometries })=>{
       if (cancelled) return;
       setRouteData({ legDists:legDistances, total:totalDistance, legGeometries });
+      // 距離を records に即時反映（保存ボタン未押しでもExcel出力で0にならないよう根本対策）
+      if (totalDistance > 0 && updateRecRef.current) {
+        updateRecRef.current(r => {
+          const newStops = r.stops.map((s, i) => ({ ...s, distanceFromPrev: legDistances[i] || 0 }));
+          return { ...r, stops: newStops, returnDistance: legDistances[r.stops.length] || 0, totalDistance };
+        });
+      }
       setCalcBusy(false);
       const m = mapRef.current;
       if (legGeometries && legGeometries.length > 0 && m) {
         if (routeLineRef.current) { routeLineRef.current.forEach(l=>l.remove()); }
-        routeLineRef.current = legGeometries.map((pts, i) =>
-          L.polyline(pts, { color:ROUTE_COLORS[i % ROUTE_COLORS.length], weight:2, opacity:0.85 }).addTo(m)
-        );
+        const n = legGeometries.length;
+        routeLineRef.current = legGeometries.map((pts, i) => {
+          const offset = n > 1 ? (i - (n - 1) / 2) * 4 : 0;
+          return L.polyline(pts, { color:ROUTE_COLORS[i % ROUTE_COLORS.length], weight:3, opacity:0.85, offset }).addTo(m);
+        });
         // 区間距離ラベルをルート中間点に表示
         distMarkersRef.current.forEach(mk=>mk.remove());
         distMarkersRef.current = [];
@@ -1505,7 +1532,7 @@ function App({ user, onLogout }) {
       const next = { ...prev };
       targets.forEach(([wd, key]) => {
         const src = lastByWday[wd];
-        next[key] = { ...(next[key]||{}), stops: src.stops.map(s=>({...s})), returnDistance: src.returnDistance||0, totalDistance: src.totalDistance||0, saved:false };
+        next[key] = { ...(next[key]||{}), stops: src.stops.map(s=>({...s})), returnDistance: src.returnDistance||0, totalDistance: src.totalDistance||0, startTime: src.startTime||'08:30', endTime: src.endTime||'17:30', saved:false };
       });
       fsSet('records', next);
       return next;
@@ -1700,11 +1727,18 @@ function App({ user, onLogout }) {
                   </div>
                 )}
                 {rec.stops.length < 10 && (
-                  <button
-                    onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
-                    className="mt-1.5 ml-10 text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
-                    ＋ この後に追加
-                  </button>
+                  <div className="mt-1.5 ml-10 flex gap-1.5">
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
+                      className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
+                      ☆ お気に入り
+                    </button>
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); }}
+                      className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
+                      📍 地図から
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
