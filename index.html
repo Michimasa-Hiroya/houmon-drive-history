@@ -1667,6 +1667,7 @@ function App({ user, onLogout }) {
   };
   const confirmDistrict = (name, saveToFav, memo) => {
     removePendingMarker();
+    setShowMapHint(false);
     const { lat, lng, address, mode } = distModal;
     setDistModal(null);
     const newStop = { lat, lng, address, districtName: name };
@@ -2111,7 +2112,7 @@ function App({ user, onLogout }) {
                       お気に入りから追加
                     </button>
                     <button
-                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); setTimeout(()=>setShowMapHint(false),4000); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
+                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
                       className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
                       地図から追加
                     </button>
@@ -2127,7 +2128,7 @@ function App({ user, onLogout }) {
                   className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
                   ☆ お気に入りから追加
                 </button>
-                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); setTimeout(()=>setShowMapHint(false),4000); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
+                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
                   className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
                   📍 地図から追加
                 </button>
@@ -2222,7 +2223,7 @@ function App({ user, onLogout }) {
       {showHelp && <HelpModal onClose={()=>setShowHelp(false)} />}
       {showSettings && <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setShowSettings(false)} favorites={favorites} onFavDelete={delFav} onFavRename={renameFav} />}
       {showBaseEdit && <BaseModal mode={showBaseEdit} current={showBaseEdit==="start" ? rec.base : rec.returnBase} favorites={favorites} onSave={handleBaseChange} onClose={()=>setShowBaseEdit(null)} />}
-      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); }} />}
+      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); setShowMapHint(false); }} />}
       {showFavs && <FavoritesModal favorites={favorites} onSelect={addFromFav} onDelete={delFav} onClose={()=>setShowFavs(false)} />}
       {showPreview && (
         <PreviewModal
