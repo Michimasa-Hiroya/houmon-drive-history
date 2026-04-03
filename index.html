@@ -918,6 +918,8 @@ function PatternModal({ records, date, onApply, onClose }) {
       wday: wd,
       sourceDate: firstOf[wd],
       sourceStops: records[firstOf[wd]].stops,
+      sourceStartTime: records[firstOf[wd]].startTime || '08:30',
+      sourceEndTime: records[firstOf[wd]].endTime || '17:30',
       targetDates: laterOf[wd],
     })));
   };
@@ -1776,10 +1778,11 @@ function App({ user, onLogout }) {
       const dist = rec.totalDistance ||
         rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0) + (rec.returnDistance||0);
       total += dist;
-      lines.push(month + '/' + d + '(' + WDAYS[dt.getDay()] + ')  ' + route + '  ' + dist + 'km');
+      lines.push(month + '/' + d + '(' + WDAYS[dt.getDay()] + ')  ' + route + '  ' + (Math.round(dist*10)/10).toFixed(1) + 'km');
     }
     lines.push('──────────────────────────');
-    lines.push('月間合計: ' + total + ' km  車両手当: ¥' + Math.round(total * (settings.vehicleAllowanceRate||40)));
+    const totalRounded = Math.round(total*10)/10;
+    lines.push('月間合計: ' + totalRounded.toFixed(1) + ' km  車両手当: ¥' + Math.round(totalRounded * (settings.vehicleAllowanceRate||40)));
     navigator.clipboard.writeText(lines.join('\n')).then(()=>{
       setCopyMsg('✅ コピーしました'); setTimeout(()=>setCopyMsg(''), 2000);
     }).catch(()=>alert('コピーに失敗しました'));
@@ -1835,12 +1838,14 @@ function App({ user, onLogout }) {
   const handleApplyPattern = (patterns) => {
     setRecords(prev => {
       const next = { ...prev };
-      for (const { sourceStops, targetDates } of patterns) {
+      for (const { sourceStops, sourceStartTime, sourceEndTime, targetDates } of patterns) {
         for (const ds of targetDates) {
           const existing = next[ds] || {};
           next[ds] = {
             ...existing,
             stops: sourceStops.map(s => ({ ...s })),
+            startTime: sourceStartTime,
+            endTime: sourceEndTime,
             saved: false,
           };
         }
