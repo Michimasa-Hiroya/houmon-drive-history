@@ -483,12 +483,20 @@ async function exportExcel(settings, records, ym) {
     const displayTotal = Math.round(totalDist * 10) / 10;
     const gasCost = fuelEfficiency > 0 ? Math.round(displayTotal / fuelEfficiency * gasPrice) : 0;
     ws.addRow([]);
-    const sumRow = ws.addRow(['月間合計走行距離', '', '', displayTotal + ' km', '', '']);
-    sumRow.font = { bold:true };
-    const allowRow = ws.addRow(['車両手当', '', '', Math.round(displayTotal * rate) + ' 円', '', '']);
-    allowRow.font = { bold:true };
-    const gasRow = ws.addRow(['月間ガソリン代概算', '', '', gasCost + ' 円', '', '']);
-    gasRow.font = { bold:true };
+    const footerRows = [
+      ['月間合計走行距離', displayTotal + ' km'],
+      ['車両手当',         Math.round(displayTotal * rate) + ' 円'],
+      ['月間ガソリン代概算', gasCost + ' 円'],
+    ];
+    footerRows.forEach(([label, value]) => {
+      const startRow = ws.rowCount + 1;
+      const row = ws.addRow([label, '', '', value, '', '']);
+      row.font = { bold: true };
+      // A〜C列をマージしてラベルが収まるようにする
+      ws.mergeCells(startRow, 1, startRow, 3);
+      row.getCell(1).alignment = { horizontal: 'right' };
+      row.getCell(4).alignment = { horizontal: 'left' };
+    });
 
     // 列幅
     ws.getColumn(1).width = 10;
