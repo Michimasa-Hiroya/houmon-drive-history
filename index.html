@@ -344,25 +344,42 @@ async function geocodeAddress(addr) {
 
 // ── ルート線を垂直方向にずらす（重なり解消） ─────────
 // offsetMeters: プラス=右側, マイナス=左側
-// ピクセル単位でポリラインを法線方向にずらす（縮尺に依存しない確実なオフセット）
+// セグメント単位でポリラインを法線方向にずらす
+// 各セグメントの法線を独立計算し、交点で結合することで折れ曲がり点の歪みを防ぐ
 function applyPolylineOffsetPx(map, pts, offsetPx) {
   if (!pts || pts.length < 2 || Math.abs(offsetPx) < 0.001) return pts;
-  return pts.map((pt, i) => {
-    const a = i > 0 ? pts[i - 1] : pts[i];
-    const b = i < pts.length - 1 ? pts[i + 1] : pts[i];
-    // スクリーン座標で接線ベクトルを計算
-    const pa = map.latLngToContainerPoint(L.latLng(a[0], a[1]));
-    const pb = map.latLngToContainerPoint(L.latLng(b[0], b[1]));
-    const tx = pb.x - pa.x;
-    const ty = pb.y - pa.y;
-    const len = Math.sqrt(tx * tx + ty * ty) || 1;
-    // 法線（90°回転）でoffsetPxだけずらした画面座標
-    const pc = map.latLngToContainerPoint(L.latLng(pt[0], pt[1]));
-    const nx = -ty / len * offsetPx;
-    const ny =  tx / len * offsetPx;
-    const shifted = map.containerPointToLatLng(L.point(pc.x + nx, pc.y + ny));
-    return [shifted.lat, shifted.lng];
-  });
+
+  // 全セグメントの法線ベクトルを計算
+  const segs = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const pa = map.latLngToContainerPoint(L.latLng(pts[i][0], pts[i][1]));
+    const pb = map.latLngToContainerPoint(L.latLng(pts[i+1][0], pts[i+1][1]));
+    const tx = pb.x - pa.x, ty = pb.y - pa.y;
+    const len = Math.sqrt(tx*tx + ty*ty) || 1;
+    segs.push({ pa, pb, nx: -ty/len, ny: tx/len });
+  }
+
+  const result = [];
+  for (let i = 0; i < pts.length; i++) {
+    let nx, ny;
+    if (i === 0) {
+      nx = segs[0].nx; ny = segs[0].ny;
+    } else if (i === pts.length - 1) {
+      nx = segs[segs.length-1].nx; ny = segs[segs.length-1].ny;
+    } else {
+      // 隣接セグメントの法線を平均化（miter join）
+      nx = segs[i-1].nx + segs[i].nx;
+      ny = segs[i-1].ny + segs[i].ny;
+      const mlen = Math.sqrt(nx*nx + ny*ny) || 1;
+      // miter長さを制限（鋭角交差点で極端に延びるのを防ぐ）
+      const scale = Math.min(3, 1 / (Math.sqrt(nx*nx+ny*ny)/mlen || 1));
+      nx = nx/mlen * scale; ny = ny/mlen * scale;
+    }
+    const pc = map.latLngToContainerPoint(L.latLng(pts[i][0], pts[i][1]));
+    const shifted = map.containerPointToLatLng(L.point(pc.x + nx*offsetPx, pc.y + ny*offsetPx));
+    result.push([shifted.lat, shifted.lng]);
+  }
+  return result;
 }
 
 // ── ルート線を地図に描画（ズーム変更後も再利用） ──
@@ -2112,7 +2129,7 @@ function App({ user, onLogout }) {
                       お気に入りから追加
                     </button>
                     <button
-                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
+                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); if(window.innerWidth<=768){setMobileTab('map');} setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
                       className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
                       地図から追加
                     </button>
@@ -2128,7 +2145,7 @@ function App({ user, onLogout }) {
                   className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
                   ☆ お気に入りから追加
                 </button>
-                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); setMobileTab('map'); setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
+                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); if(window.innerWidth<=768){setMobileTab('map');} setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
                   className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
                   📍 地図から追加
                 </button>
