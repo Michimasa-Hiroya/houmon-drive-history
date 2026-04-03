@@ -555,7 +555,7 @@ function HelpModal({ onClose }) {
     {
       icon: "↕️",
       title: "順番を並び替える",
-      desc: "訪問先カードをドラッグ（長押しして上下に動かす）すると順番を入れ替えられます。",
+      desc: "各訪問先カード左端の「≡」マークを上下にドラッグすると順番を入れ替えられます。スマホでもPCでも使えます。",
     },
     {
       icon: "🗺️",
@@ -1580,16 +1580,56 @@ function App({ user, onLogout }) {
     if (mapRef.current) mapRef.current.setView([lat,lng], 15);
   };
 
-  // ── ドラッグ並び替え ─────────────────────
+  // ── タッチ対応ドラッグ並び替え ───────────────
   const dragIdx = useRef(null);
-  const onDragStart = i => { dragIdx.current=i; };
-  const onDragOver = e => e.preventDefault();
+  const dragOverIdx = useRef(null);
+  const [draggingIdx, setDraggingIdx] = useState(null);
+  const [dragOverIdxState, setDragOverIdxState] = useState(null);
+
+  // PC用 (mouse)
+  const onDragStart = i => { dragIdx.current = i; setDraggingIdx(i); };
+  const onDragOver = (e, i) => { e.preventDefault(); dragOverIdx.current = i; setDragOverIdxState(i); };
   const onDrop = (e, i) => {
     e.preventDefault();
     const from = dragIdx.current;
-    if (from===null||from===i) return;
-    updateRec(r=>{ const s=[...r.stops]; const [x]=s.splice(from,1); s.splice(i,0,x); return{...r,stops:s}; });
-    dragIdx.current=null;
+    if (from === null || from === i) { setDraggingIdx(null); setDragOverIdxState(null); return; }
+    updateRec(r => { const s = [...r.stops]; const [x] = s.splice(from, 1); s.splice(i, 0, x); return { ...r, stops: s }; });
+    dragIdx.current = null; setDraggingIdx(null); setDragOverIdxState(null);
+  };
+  const onDragEnd = () => { setDraggingIdx(null); setDragOverIdxState(null); };
+
+  // スマホ用 (touch) — ハンドル要素に付ける
+  const touchDragIdx = useRef(null);
+  const touchLastY = useRef(0);
+  const stopItemRefs = useRef([]);
+  const onHandleTouchStart = (e, i) => {
+    e.stopPropagation();
+    touchDragIdx.current = i;
+    touchLastY.current = e.touches[0].clientY;
+    setDraggingIdx(i);
+  };
+  const onHandleTouchMove = e => {
+    e.preventDefault();
+    const y = e.touches[0].clientY;
+    // どのカードの上にいるか判定
+    stopItemRefs.current.forEach((el, idx) => {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (y >= rect.top && y <= rect.bottom) {
+        dragOverIdx.current = idx;
+        setDragOverIdxState(idx);
+      }
+    });
+    touchLastY.current = y;
+  };
+  const onHandleTouchEnd = () => {
+    const from = touchDragIdx.current;
+    const to = dragOverIdx.current;
+    if (from !== null && to !== null && from !== to) {
+      updateRec(r => { const s = [...r.stops]; const [x] = s.splice(from, 1); s.splice(to, 0, x); return { ...r, stops: s }; });
+    }
+    touchDragIdx.current = null; dragOverIdx.current = null;
+    setDraggingIdx(null); setDragOverIdxState(null);
   };
 
   // ── 保存（全日付の変更を一括保存） ──────────
@@ -1864,11 +1904,27 @@ function App({ user, onLogout }) {
             {/* 訪問先 */}
             {rec.stops.map((s,i)=>(
               <div key={`${s.lat}${s.lng}${i}`}
-                className="stop-item bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 mb-2"
-                draggable onDragStart={()=>onDragStart(i)} onDragOver={onDragOver} onDrop={e=>onDrop(e,i)}
+                ref={el => stopItemRefs.current[i] = el}
+                className={`stop-item border rounded-xl px-3 py-2.5 mb-2 transition-all ${
+                  draggingIdx === i ? 'opacity-40 scale-95 bg-blue-50 border-blue-300' :
+                  dragOverIdxState === i && draggingIdx !== null ? 'border-blue-400 border-2 bg-blue-50' :
+                  'bg-slate-50 border-slate-200'
+                }`}
+                draggable onDragStart={()=>onDragStart(i)} onDragOver={e=>onDragOver(e,i)} onDrop={e=>onDrop(e,i)} onDragEnd={onDragEnd}
               >
                 <div className="flex items-start gap-2">
-                  <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
+                  {/* ドラッグハンドル（PC＆スマホ共通） */}
+                  <div
+                    className="w-6 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 pt-1.5 cursor-grab active:cursor-grabbing touch-none select-none"
+                    onTouchStart={e=>onHandleTouchStart(e,i)}
+                    onTouchMove={onHandleTouchMove}
+                    onTouchEnd={onHandleTouchEnd}
+                  >
+                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
+                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
+                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
+                  </div>
+                  <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
                     {i+1}
                   </div>
                   <div className="flex-1 min-w-0">
