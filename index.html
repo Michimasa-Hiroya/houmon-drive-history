@@ -1396,7 +1396,7 @@ function App({ user, onLogout }) {
   const [showAbout, setShowAbout] = useState(false);
   const [showFavs, setShowFavs] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState(null); // null=末尾, 数値=その後に挿入
-  const [showMapHint, setShowMapHint] = useState(false);
+  const [showMapPopup, setShowMapPopup] = useState(false); // 'insert' | 'add' | false
   const [showPreview, setShowPreview] = useState(false);
   const [showPattern, setShowPattern] = useState(false);
   const [mobileTab, setMobileTab] = useState("list"); // "map" | "list"
@@ -1712,7 +1712,7 @@ function App({ user, onLogout }) {
   };
   const confirmDistrict = (name, saveToFav, memo) => {
     removePendingMarker();
-    setShowMapHint(false);
+    setShowMapPopup(false);
     const { lat, lng, address, mode } = distModal;
     setDistModal(null);
     const newStop = { lat, lng, address, districtName: name };
@@ -2047,11 +2047,6 @@ function App({ user, onLogout }) {
             <div className="press-ripple" style={{ left:ripple.x, top:ripple.y }} />
           )}
 
-          {showMapHint && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white rounded-full px-4 py-2.5 shadow-lg text-sm font-bold z-30 whitespace-nowrap animate-bounce">
-              📍 地図を長押しして訪問先を選んでください
-            </div>
-          )}
           {calcBusy && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-white/95 rounded-full px-4 py-2 shadow-lg text-sm text-blue-700 font-medium z-30 whitespace-nowrap">
               📡 経路計算中...
@@ -2150,17 +2145,29 @@ function App({ user, onLogout }) {
                   </div>
                 )}
                 {rec.stops.length < 10 && (
-                  <div className="mt-1.5 ml-10 flex gap-1.5">
-                    <button
-                      onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
-                      className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
-                      お気に入りから追加
-                    </button>
-                    <button
-                      onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapHint(true); if(window.innerWidth<=768){setMobileTab('map');} setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
-                      className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
-                      地図から追加
-                    </button>
+                  <div className="mt-1.5 ml-10">
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
+                        className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
+                        お気に入りから追加
+                      </button>
+                      <button
+                        onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapPopup(`insert-${i}`); }}
+                        className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
+                        地図から追加
+                      </button>
+                    </div>
+                    {showMapPopup === `insert-${i}` && (
+                      <div className="mt-1.5 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                        <span className="text-lg flex-shrink-0">📍</span>
+                        <div>
+                          <div className="text-xs font-bold text-emerald-700">地図を長押しして追加</div>
+                          <div className="text-[11px] text-emerald-600 mt-0.5">地図タブに切り替えて、追加したい場所を長押ししてください。</div>
+                        </div>
+                        <button onClick={()=>setShowMapPopup(false)} className="ml-auto text-emerald-400 text-lg leading-none flex-shrink-0">×</button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2168,15 +2175,27 @@ function App({ user, onLogout }) {
 
             {/* お気に入りから追加 */}
             {rec.stops.length < 10 && (
-              <div className="flex gap-2 mb-2">
-                <button onClick={()=>setShowFavs(true)}
-                  className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
-                  ☆ お気に入りから追加
-                </button>
-                <button onClick={()=>{ setMapMode('stop'); setShowMapHint(true); if(window.innerWidth<=768){setMobileTab('map');} setTimeout(()=>mapRef.current?.invalidateSize(),50); }}
-                  className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
-                  📍 地図から追加
-                </button>
+              <div className="mb-2">
+                <div className="flex gap-2">
+                  <button onClick={()=>setShowFavs(true)}
+                    className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
+                    ☆ お気に入りから追加
+                  </button>
+                  <button onClick={()=>{ setMapMode('stop'); setShowMapPopup('add'); }}
+                    className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
+                    📍 地図から追加
+                  </button>
+                </div>
+                {showMapPopup === 'add' && (
+                  <div className="mt-2 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                    <span className="text-lg flex-shrink-0">📍</span>
+                    <div>
+                      <div className="text-xs font-bold text-emerald-700">地図を長押しして追加</div>
+                      <div className="text-[11px] text-emerald-600 mt-0.5">地図タブに切り替えて、追加したい場所を長押ししてください。</div>
+                    </div>
+                    <button onClick={()=>setShowMapPopup(false)} className="ml-auto text-emerald-400 text-lg leading-none flex-shrink-0">×</button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2268,7 +2287,7 @@ function App({ user, onLogout }) {
       {showHelp && <HelpModal onClose={()=>setShowHelp(false)} />}
       {showSettings && <SettingsModal settings={settings} onSave={handleSaveSettings} onClose={()=>setShowSettings(false)} favorites={favorites} onFavDelete={delFav} onFavRename={renameFav} />}
       {showBaseEdit && <BaseModal mode={showBaseEdit} current={showBaseEdit==="start" ? rec.base : rec.returnBase} favorites={favorites} onSave={handleBaseChange} onClose={()=>setShowBaseEdit(null)} />}
-      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); setShowMapHint(false); }} />}
+      {distModal && <DistrictModal address={distModal.address} suggested={distModal.suggested} onConfirm={confirmDistrict} onCancel={()=>{ removePendingMarker(); setDistModal(null); setShowMapPopup(false); }} />}
       {showFavs && <FavoritesModal favorites={favorites} onSelect={addFromFav} onDelete={delFav} onClose={()=>setShowFavs(false)} />}
       {showPreview && (
         <PreviewModal
