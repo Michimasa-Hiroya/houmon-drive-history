@@ -382,14 +382,42 @@ function applyPolylineOffsetPx(map, pts, offsetPx) {
   return result;
 }
 
+// ── Douglas-Peucker 座標間引き（交差点の微細カーブ除去） ──
+function simplifyPoints(pts, tolerancePx, map) {
+  if (pts.length <= 2) return pts;
+  // スクリーン座標に変換して間引き
+  const screen = pts.map(p => map.latLngToContainerPoint(L.latLng(p[0], p[1])));
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [start, end] = stack.pop();
+    let maxD = 0, maxI = start;
+    const ax = screen[start].x, ay = screen[start].y;
+    const bx = screen[end].x,   by = screen[end].y;
+    const abLen = Math.sqrt((bx-ax)**2 + (by-ay)**2) || 1;
+    for (let i = start + 1; i < end; i++) {
+      // 点から直線ABへの垂直距離
+      const d = Math.abs((by-ay)*screen[i].x - (bx-ax)*screen[i].y + bx*ay - by*ax) / abLen;
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > tolerancePx) {
+      keep[maxI] = 1;
+      stack.push([start, maxI], [maxI, end]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
 // ── ルート線を地図に描画（ズーム変更後も再利用） ──
 const ROUTE_LINES_REF = { current: null }; // モジュールスコープのref（useRef代替）
 function drawRouteLines(map, legGeometries) {
   if (ROUTE_LINES_REF.current) { ROUTE_LINES_REF.current.forEach(l => l.remove()); }
   const n = legGeometries.length;
   ROUTE_LINES_REF.current = legGeometries.map((pts, i) => {
+    const simplified = simplifyPoints(pts, 2.5, map); // 2.5px未満の曲がりを除去
     const offsetPx = n > 1 ? (i - (n - 1) / 2) * 4 : 0;
-    const offsetPts = applyPolylineOffsetPx(map, pts, offsetPx);
+    const offsetPts = applyPolylineOffsetPx(map, simplified, offsetPx);
     return L.polyline(offsetPts, { color: ROUTE_COLORS[i % ROUTE_COLORS.length], weight: 3, opacity: 0.9 }).addTo(map);
   });
   return ROUTE_LINES_REF.current;
