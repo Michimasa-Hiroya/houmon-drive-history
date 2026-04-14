@@ -426,17 +426,25 @@ function drawRouteLines(map, legGeometries) {
 // ── OSRM 経路計算 ─────────────────────────
 async function fetchRoute(waypoints) {
   const coords = waypoints.map(p => `${p.lng},${p.lat}`).join(";");
-  // overview=full でルート全体の連続したジオメトリを取得（stepジオメトリはラウンドアバウット円弧を含むため使わない）
+  // alternatives=true で複数ルートを取得し、90%の確率で最短距離ルートを選択（10%で最速ルート）
   const res = await fetch(
-    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=true`,
     { signal: AbortSignal.timeout(10000) }
   );
   if (!res.ok) throw new Error(`OSRM ${res.status}`);
   const d = await res.json();
   if (!d.routes?.length) throw new Error("経路なし");
-  const route = d.routes[0];
+  // 90%の確率で最短距離ルート、10%で最速ルートを選択
+  let route;
+  if (d.routes.length > 1 && Math.random() < 0.9) {
+    route = d.routes.reduce((best, r) => r.distance < best.distance ? r : best, d.routes[0]);
+  } else {
+    route = d.routes[0];
+  }
   const legDistances = route.legs.map(l => Math.round(l.distance/100)/10);
+  const legDurations = route.legs.map(l => Math.round(l.duration/60));
   const totalDistance = Math.round(route.distance/100)/10;
+  const totalDuration = Math.round(route.duration/60);
   // ルート全体のgeometryをウェイポイント位置で分割してleg別に色分け
   let legGeometries = [];
   try {
@@ -461,7 +469,7 @@ async function fetchRoute(waypoints) {
       );
     }
   } catch(e) { console.warn("geometry抽出失敗(距離は正常):", e); }
-  return { legDistances, totalDistance, legGeometries };
+  return { legDistances, totalDistance, legGeometries, legDurations, totalDuration };
 }
 
 // ── カスタムマーカーアイコン ───────────────
@@ -515,9 +523,10 @@ async function exportExcel(settings, records, ym) {
       const dateStr = month + '/' + d;
       const wday = WDAYS[dt.getDay()];
       if (rec && rec.stops && rec.stops.length > 0) {
-        const base = rec.base?.districtName || settings.defaultBase.districtName || '';
-        const retBase = rec.returnBase?.districtName || base;
-        const route = [base, ...rec.stops.map(s=>s.districtName), retBase].join('→');
+        const shorten = n => (n||'').replace(/訪問看護ステーション灯/g, '灯');
+        const base = shorten(rec.base?.districtName || settings.defaultBase.districtName || '');
+        const retBase = shorten(rec.returnBase?.districtName || base);
+        const route = [base, ...rec.stops.map(s=>shorten(s.districtName)), retBase].join('→');
         // 走行距離：totalDistance → distanceFromPrev合計 → 0 の優先順で取得
         const stopSum = rec.stops.reduce((s,st)=>s+(st.distanceFromPrev||0),0);
         const retDist = rec.returnDistance || 0;
@@ -1405,7 +1414,7 @@ function App({ user, onLogout }) {
   const [favToast, setFavToast] = useState(null);
   const [favMemoModal, setFavMemoModal] = useState(null);
   const [distModal, setDistModal] = useState(null);
-  const [routeData, setRouteData] = useState({ legDists:[], total:0, legGeometries:[] });
+  const [routeData, setRouteData] = useState({ legDists:[], total:0, legGeometries:[], legDurations:[], totalDuration:0 });
   const [routeErr, setRouteErr] = useState(null);
   const [calcBusy, setCalcBusy] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
@@ -1653,16 +1662,16 @@ function App({ user, onLogout }) {
     });
 
     if (r.stops.length === 0 && r.base.lat === r.returnBase.lat && r.base.lng === r.returnBase.lng) {
-      setRouteData({ legDists:[], total:0, legGeometries:[] });
+      setRouteData({ legDists:[], total:0, legGeometries:[], legDurations:[], totalDuration:0 });
       return;
     }
 
     const waypoints = [r.base, ...r.stops, r.returnBase];
     let cancelled = false;
     setCalcBusy(true); setRouteErr(null);
-    fetchRoute(waypoints).then(({ legDistances, totalDistance, legGeometries })=>{
+    fetchRoute(waypoints).then(({ legDistances, totalDistance, legGeometries, legDurations, totalDuration })=>{
       if (cancelled) return;
-      setRouteData({ legDists:legDistances, total:totalDistance, legGeometries });
+      setRouteData({ legDists:legDistances, total:totalDistance, legGeometries, legDurations, totalDuration });
       // 距離を records に即時反映（保存ボタン未押しでもExcel出力で0にならないよう根本対策）
       if (totalDistance > 0 && updateRecRef.current) {
         updateRecRef.current(r => {
@@ -1684,11 +1693,13 @@ function App({ user, onLogout }) {
           const midLat = (prev.lat + wp.lat) / 2;
           const midLng = (prev.lng + wp.lng) / 2;
           const dist = legDistances[i-1];
+          const dur = legDurations[i-1];
           const col = ROUTE_COLORS[(i-1) % ROUTE_COLORS.length];
           if (dist > 0) {
+            const labelText = dur > 0 ? `${dist} km・${dur}分` : `${dist} km`;
             const lbl = L.marker([midLat, midLng], {
               icon: L.divIcon({
-                html: `<div style="background:white;border:2px solid ${col};border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;color:${col};white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">${dist} km</div>`,
+                html: `<div style="background:white;border:2px solid ${col};border-radius:10px;padding:2px 9px;font-size:11px;font-weight:700;color:${col};white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.18);">${labelText}</div>`,
                 className: "", iconSize: null, iconAnchor: [28, 10]
               }),
               interactive: false, zIndexOffset: -100
@@ -1735,7 +1746,9 @@ function App({ user, onLogout }) {
     updateRec(r=>{
       if (r.stops.length >= 10) { alert("最大10件まで追加できます。"); return r; }
       const s = [...r.stops];
-      if (insertIdx !== null && insertIdx >= 0 && insertIdx < s.length) {
+      if (insertIdx === -1) {
+        s.splice(0, 0, newStop);
+      } else if (insertIdx !== null && insertIdx >= 0 && insertIdx < s.length) {
         s.splice(insertIdx + 1, 0, newStop);
       } else {
         s.push(newStop);
@@ -1758,7 +1771,9 @@ function App({ user, onLogout }) {
     updateRec(r => {
       if (r.stops.length >= 10) { alert("最大10件"); return r; }
       const s = [...r.stops];
-      if (idx !== null && idx >= 0 && idx < s.length) {
+      if (idx === -1) {
+        s.splice(0, 0, { ...fav });
+      } else if (idx !== null && idx >= 0 && idx < s.length) {
         s.splice(idx + 1, 0, { ...fav });
       } else {
         s.push({ ...fav });
@@ -1936,6 +1951,33 @@ function App({ user, onLogout }) {
     setSaveMsg('先月最終週をコピーしました！'); setTimeout(()=>setSaveMsg(''), 2500);
   };
 
+  // ── 今週→来週コピー ─────────────────────────
+  const handleCopyThisWeekToNext = () => {
+    const dt = new Date(date + 'T00:00:00');
+    const dow = dt.getDay(); // 0=日, 1=月...6=土
+    // 今週の月曜日を求める
+    const mondayOffset = dow === 0 ? -6 : 1 - dow;
+    const mondayStr = addDays(date, mondayOffset);
+    // 今週の月〜金のキーを列挙
+    const thisWeekKeys = [];
+    for (let i = 0; i < 5; i++) thisWeekKeys.push(addDays(mondayStr, i));
+    const sources = thisWeekKeys.filter(k => records[k]?.stops?.length > 0);
+    if (sources.length === 0) { alert('今週（月〜金）の訪問データが見つかりませんでした'); return; }
+    const targets = sources.map(k => ({ from: k, to: addDays(k, 7) }));
+    const hasExisting = targets.some(({ to }) => records[to]?.stops?.length > 0);
+    if (hasExisting && !window.confirm(`${targets.length}日分を来週にコピーします。既存データは上書きされます。よろしいですか？`)) return;
+    setRecords(prev => {
+      const next = { ...prev };
+      targets.forEach(({ from, to }) => {
+        const src = prev[from];
+        next[to] = { ...(next[to] || {}), stops: src.stops.map(s=>({...s})), returnDistance: src.returnDistance||0, totalDistance: src.totalDistance||0, startTime: src.startTime||'08:30', endTime: src.endTime||'17:30', saved: false };
+      });
+      fsSet('records', next);
+      return next;
+    });
+    setSaveMsg('今週→来週コピーしました！'); setTimeout(()=>setSaveMsg(''), 2500);
+  };
+
   // ── 月次パターン反映 ─────────────────────────
   const handleApplyPattern = (patterns) => {
     setRecords(prev => {
@@ -2102,6 +2144,34 @@ function App({ user, onLogout }) {
               </div>
             </div>
 
+            {/* 出発地の直後に挿入ボタン（1件目の前） */}
+            {rec.stops.length < 10 && (
+              <div className="mb-1.5 ml-10 pl-1">
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={()=>{ setInsertAfterIdx(-1); setShowFavs(true); }}
+                    className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
+                    お気に入りから追加
+                  </button>
+                  <button
+                    onClick={()=>{ setInsertAfterIdx(-1); setMapMode('stop'); setShowMapPopup('insert-base'); }}
+                    className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
+                    地図から追加
+                  </button>
+                </div>
+                {showMapPopup === 'insert-base' && (
+                  <div className="mt-1.5 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                    <span className="text-lg flex-shrink-0">📍</span>
+                    <div>
+                      <div className="text-xs font-bold text-emerald-700">地図を長押しして追加</div>
+                      <div className="text-[11px] text-emerald-600 mt-0.5">地図タブに切り替えて、追加したい場所を長押ししてください。</div>
+                    </div>
+                    <button onClick={()=>setShowMapPopup(false)} className="ml-auto text-emerald-400 text-lg leading-none flex-shrink-0">×</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 訪問先 */}
             {rec.stops.map((s,i)=>(
               <div key={`${s.lat}${s.lng}${i}`}
@@ -2141,7 +2211,7 @@ function App({ user, onLogout }) {
                 </div>
                 {displayLegDist(i) > 0 && (
                   <div className="mt-1 ml-10 text-xs text-blue-600 font-semibold">
-                    {i === 0 ? baseDistrict : rec.stops[i-1].districtName}から {displayLegDist(i)} km
+                    {i === 0 ? baseDistrict : rec.stops[i-1].districtName}から {displayLegDist(i)} km{routeData.legDurations[i] > 0 ? `（約${routeData.legDurations[i]}分）` : ''}
                   </div>
                 )}
                 {rec.stops.length < 10 && (
@@ -2204,7 +2274,7 @@ function App({ user, onLogout }) {
               <div className="w-8 h-8 bg-slate-500 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0">帰</div>
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-semibold text-slate-700">到着（{rec.returnBase?.districtName}）</div>
-                {displayReturn > 0 && <div className="text-xs text-blue-600 font-semibold">{rec.stops.length>0 ? rec.stops[rec.stops.length-1].districtName : rec.base?.districtName} から {displayReturn} km</div>}
+                {displayReturn > 0 && <div className="text-xs text-blue-600 font-semibold">{rec.stops.length>0 ? rec.stops[rec.stops.length-1].districtName : rec.base?.districtName} から {displayReturn} km{routeData.legDurations[rec.stops.length] > 0 ? `（約${routeData.legDurations[rec.stops.length]}分）` : ''}</div>}
               </div>
               <div className="flex flex-shrink-0 gap-0.5">
                 <button onClick={()=>setFavMemoModal(rec.returnBase)} title="お気に入り登録"
@@ -2242,7 +2312,7 @@ function App({ user, onLogout }) {
                 <div className="bg-blue-50 rounded-xl px-4 py-2.5 space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-blue-700 font-semibold">本日合計</span>
-                    <span className="text-2xl font-bold text-blue-700">{displayTotal > 0 ? `${displayTotal} km` : "─ km"}</span>
+                    <span className="text-xl font-bold text-blue-700">{displayTotal > 0 ? `${displayTotal} km${routeData.totalDuration > 0 ? `（約${routeData.totalDuration}分）` : ''}` : "─ km"}</span>
                   </div>
                   {displayTotal > 0 && (
                     <div className="border-t border-blue-100 pt-1.5 space-y-1">
@@ -2265,6 +2335,11 @@ function App({ user, onLogout }) {
             <button onClick={handleCopyFromLastMonth}
               className="w-full border border-teal-300 bg-teal-50 active:bg-teal-100 text-teal-700 rounded-xl py-2.5 text-sm font-semibold mb-2">
               📥 先月最終週→今月第1週へコピー
+            </button>
+            {/* 今週→来週コピーボタン */}
+            <button onClick={handleCopyThisWeekToNext}
+              className="w-full border border-cyan-300 bg-cyan-50 active:bg-cyan-100 text-cyan-700 rounded-xl py-2.5 text-sm font-semibold mb-2">
+              📋 今週のルートを来週にコピー
             </button>
             {/* 月次パターン反映ボタン */}
             <button onClick={()=>setShowPattern(true)}
