@@ -1457,6 +1457,7 @@ function App({ user, onLogout }) {
   const [showFavs, setShowFavs] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState(null); // null=末尾, 数値=その後に挿入
   const [showMapPopup, setShowMapPopup] = useState(false); // 'insert' | 'add' | false
+  const [insertOpenAt, setInsertOpenAt] = useState(null); // null | 'base' | 数値(stop index)
   const [showPreview, setShowPreview] = useState(false);
   const [showPattern, setShowPattern] = useState(false);
   const [mobileTab, setMobileTab] = useState("list"); // "map" | "list"
