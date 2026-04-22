@@ -2197,21 +2197,31 @@ function App({ user, onLogout }) {
               </div>
             </div>
 
-            {/* 出発地の直後に挿入ボタン（1件目の前） */}
+            {/* 出発直後の挿入ゾーン */}
             {rec.stops.length < 10 && (
-              <div className="mb-1.5 ml-10 pl-1">
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={()=>{ setInsertAfterIdx(-1); setShowFavs(true); }}
-                    className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
-                    お気に入りから追加
+              <div className="mb-1">
+                {insertOpenAt !== 'base' ? (
+                  <button className="tl-insert-btn" onClick={()=>setInsertOpenAt('base')}>
+                    <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                   </button>
-                  <button
-                    onClick={()=>{ setInsertAfterIdx(-1); setMapMode('stop'); setShowMapPopup('insert-base'); }}
-                    className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
-                    地図から追加
-                  </button>
-                </div>
+                ) : (
+                  <div className="tl-insert-choices">
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(-1); setShowFavs(true); setInsertOpenAt(null); }}
+                      style={{borderColor:'#93c5fd',color:'#2563eb',background:'#eff6ff'}}>
+                      ☆ お気に入りから
+                    </button>
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(-1); setMapMode('stop'); setShowMapPopup('insert-base'); setInsertOpenAt(null); }}
+                      style={{borderColor:'#6ee7b7',color:'#059669',background:'#f0fdf4'}}>
+                      📍 地図から
+                    </button>
+                    <button onClick={()=>setInsertOpenAt(null)}
+                      style={{flex:'0 0 auto',borderColor:'#e2e8f0',color:'#94a3b8',background:'#f8fafc',padding:'7px 10px'}}>
+                      ✕
+                    </button>
+                  </div>
+                )}
                 {showMapPopup === 'insert-base' && (
                   <div className="mt-1.5 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
                     <span className="text-lg flex-shrink-0">📍</span>
@@ -2268,19 +2278,29 @@ function App({ user, onLogout }) {
                   </div>
                 )}
                 {rec.stops.length < 10 && (
-                  <div className="mt-1.5 ml-10">
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); }}
-                        className="text-[11px] text-blue-500 border border-blue-200 rounded-full px-2.5 py-0.5 active:bg-blue-50">
-                        お気に入りから追加
+                  <div className="mt-1">
+                    {insertOpenAt !== i ? (
+                      <button className="tl-insert-btn" onClick={()=>setInsertOpenAt(i)}>
+                        <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                       </button>
-                      <button
-                        onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapPopup(`insert-${i}`); }}
-                        className="text-[11px] text-emerald-600 border border-emerald-200 rounded-full px-2.5 py-0.5 active:bg-emerald-50">
-                        地図から追加
-                      </button>
-                    </div>
+                    ) : (
+                      <div className="tl-insert-choices">
+                        <button
+                          onClick={()=>{ setInsertAfterIdx(i); setShowFavs(true); setInsertOpenAt(null); }}
+                          style={{borderColor:'#93c5fd',color:'#2563eb',background:'#eff6ff'}}>
+                          ☆ お気に入りから
+                        </button>
+                        <button
+                          onClick={()=>{ setInsertAfterIdx(i); setMapMode('stop'); setShowMapPopup(`insert-${i}`); setInsertOpenAt(null); }}
+                          style={{borderColor:'#6ee7b7',color:'#059669',background:'#f0fdf4'}}>
+                          📍 地図から
+                        </button>
+                        <button onClick={()=>setInsertOpenAt(null)}
+                          style={{flex:'0 0 auto',borderColor:'#e2e8f0',color:'#94a3b8',background:'#f8fafc',padding:'7px 10px'}}>
+                          ✕
+                        </button>
+                      </div>
+                    )}
                     {showMapPopup === `insert-${i}` && (
                       <div className="mt-1.5 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
                         <span className="text-lg flex-shrink-0">📍</span>
@@ -2296,21 +2316,33 @@ function App({ user, onLogout }) {
               </div>
             ))}
 
-            {/* お気に入りから追加 */}
+            {/* リスト末尾の追加ゾーン */}
             {rec.stops.length < 10 && (
-              <div className="mb-2">
-                <div className="flex gap-2">
-                  <button onClick={()=>setShowFavs(true)}
-                    className="flex-1 border-2 border-dashed border-slate-200 rounded-xl py-2.5 text-sm text-slate-400 active:bg-blue-50 active:border-blue-400 active:text-blue-500">
-                    ☆ お気に入りから追加
+              <div className="mb-1">
+                {insertOpenAt !== 'end' ? (
+                  <button className="tl-insert-btn" onClick={()=>setInsertOpenAt('end')}>
+                    <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                   </button>
-                  <button onClick={()=>{ setMapMode('stop'); setShowMapPopup('add'); }}
-                    className="flex-1 border-2 border-dashed border-emerald-200 rounded-xl py-2.5 text-sm text-emerald-400 active:bg-emerald-50 active:border-emerald-400 active:text-emerald-600">
-                    📍 地図から追加
-                  </button>
-                </div>
+                ) : (
+                  <div className="tl-insert-choices">
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(null); setShowFavs(true); setInsertOpenAt(null); }}
+                      style={{borderColor:'#93c5fd',color:'#2563eb',background:'#eff6ff'}}>
+                      ☆ お気に入りから
+                    </button>
+                    <button
+                      onClick={()=>{ setInsertAfterIdx(null); setMapMode('stop'); setShowMapPopup('add'); setInsertOpenAt(null); }}
+                      style={{borderColor:'#6ee7b7',color:'#059669',background:'#f0fdf4'}}>
+                      📍 地図から
+                    </button>
+                    <button onClick={()=>setInsertOpenAt(null)}
+                      style={{flex:'0 0 auto',borderColor:'#e2e8f0',color:'#94a3b8',background:'#f8fafc',padding:'7px 10px'}}>
+                      ✕
+                    </button>
+                  </div>
+                )}
                 {showMapPopup === 'add' && (
-                  <div className="mt-2 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                  <div className="mt-1.5 bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2.5 flex items-start gap-2">
                     <span className="text-lg flex-shrink-0">📍</span>
                     <div>
                       <div className="text-xs font-bold text-emerald-700">地図を長押しして追加</div>
