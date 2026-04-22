@@ -2197,11 +2197,11 @@ function App({ user, onLogout }) {
               </div>
             </div>
 
-            {/* 出発直後の挿入ゾーン */}
-            {rec.stops.length < 10 && (
+            {/* 出発直後の挿入ゾーン（stops > 0 のときのみ。0件時は末尾ゾーンだけ表示） */}
+            {rec.stops.length > 0 && rec.stops.length < 10 && (
               <div className="mb-1">
                 {insertOpenAt !== 'base' ? (
-                  <button className="tl-insert-btn" onClick={()=>setInsertOpenAt('base')}>
+                  <button className="tl-insert-btn" onClick={()=>{ setInsertOpenAt('base'); setShowMapPopup(false); }}>
                     <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                   </button>
                 ) : (
@@ -2279,7 +2279,7 @@ function App({ user, onLogout }) {
                 {rec.stops.length < 10 && (
                   <div className="mt-1">
                     {insertOpenAt !== i ? (
-                      <button className="tl-insert-btn" onClick={()=>setInsertOpenAt(i)}>
+                      <button className="tl-insert-btn" onClick={()=>{ setInsertOpenAt(i); setShowMapPopup(false); }}>
                         <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                       </button>
                     ) : (
@@ -2320,7 +2320,7 @@ function App({ user, onLogout }) {
             {rec.stops.length < 10 && (
               <div className="mb-1">
                 {insertOpenAt !== 'end' ? (
-                  <button className="tl-insert-btn" onClick={()=>setInsertOpenAt('end')}>
+                  <button className="tl-insert-btn" onClick={()=>{ setInsertOpenAt('end'); setShowMapPopup(false); }}>
                     <span style={{fontSize:'16px',lineHeight:1}}>＋</span> ここに訪問先を追加
                   </button>
                 ) : (
