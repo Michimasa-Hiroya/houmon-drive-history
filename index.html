@@ -129,6 +129,57 @@
   }
   .preview-table th { background: #f8fafc; font-weight: 600; color: #475569; }
   .preview-table .total-row td { font-weight: 700; background: #eff6ff; color: #1d4ed8; }
+
+  /* ── タイムライン ── */
+  .tl-wrap { position: relative; padding-left: 26px; }
+  .tl-wrap::before {
+    content: ''; position: absolute; left: 10px; top: 16px; bottom: 16px;
+    width: 2px; background: linear-gradient(to bottom, #10b981 0%, #3b82f6 30%, #64748b 95%);
+  }
+  .tl-node { position: relative; margin-bottom: 4px; }
+  .tl-dot {
+    position: absolute; left: -21px; top: 10px;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; color: white; z-index: 1;
+    box-shadow: 0 0 0 3px white;
+  }
+
+  /* ── 挿入ボタン（大型） ── */
+  .tl-insert-btn {
+    width: 100%; padding: 7px 12px; margin: 5px 0;
+    background: #eff6ff; border: 1.5px dashed #93c5fd; border-radius: 10px;
+    font-size: 12px; font-weight: 600; color: #3b82f6;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: background 0.12s;
+  }
+  .tl-insert-btn:hover { background: #dbeafe; border-color: #3b82f6; }
+  .tl-insert-btn:active { background: #bfdbfe; }
+  .tl-insert-choices { display: flex; gap: 8px; margin: 4px 0 6px; }
+  .tl-insert-choices button {
+    flex: 1; padding: 7px 0; border-radius: 10px; border: 1.5px solid; cursor: pointer;
+    font-size: 12px; font-weight: 600; text-align: center;
+  }
+
+  /* ── ドラッグハンドル（枠付き） ── */
+  .drag-box {
+    display: flex; flex-direction: column; gap: 3px;
+    cursor: grab; padding: 3px 5px; border-radius: 6px;
+    background: #f8fafc; border: 1px solid #e2e8f0; flex-shrink: 0;
+    touch-action: none; user-select: none;
+  }
+  .drag-box:active { cursor: grabbing; background: #f1f5f9; }
+  .drag-box span { display: block; width: 14px; height: 2px; background: #94a3b8; border-radius: 1px; }
+
+  /* ── アクションボタン（ラベル付き） ── */
+  .act-btn {
+    font-size: 11px; padding: 5px 9px; border-radius: 8px;
+    border: 1px solid; cursor: pointer; font-weight: 600; white-space: nowrap;
+  }
+  .act-btn-fav  { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+  .act-btn-del  { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+  .act-btn-map  { background: #f0fdf4; color: #059669; border-color: #6ee7b7; }
+  .act-btn-gray { background: #f8fafc; color: #475569; border-color: #cbd5e1; }
 </style>
 </head>
 <body>
