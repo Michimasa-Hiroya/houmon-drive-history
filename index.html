@@ -2237,39 +2237,38 @@ function App({ user, onLogout }) {
 
             {/* 訪問先 */}
             {rec.stops.map((s,i)=>(
-              <div key={`${s.lat}${s.lng}${i}`}
-                ref={el => stopItemRefs.current[i] = el}
-                className={`stop-item border rounded-xl px-3 py-2.5 mb-2 transition-all ${
-                  draggingIdx === i ? 'opacity-40 scale-95 bg-blue-50 border-blue-300' :
-                  dragOverIdxState === i && draggingIdx !== null ? 'border-blue-400 border-2 bg-blue-50' :
-                  'bg-slate-50 border-slate-200'
-                }`}
-                draggable onDragStart={()=>onDragStart(i)} onDragOver={e=>onDragOver(e,i)} onDrop={e=>onDrop(e,i)} onDragEnd={onDragEnd}
-              >
+              <div key={`${s.lat}${s.lng}${i}`} className="tl-node">
+                <div className="tl-dot" style={{background:['#3b82f6','#f97316','#8b5cf6','#10b981','#ef4444','#0ea5e9','#ec4899','#eab308'][i % 8]}}>
+                  {i+1}
+                </div>
+                <div
+                  ref={el => stopItemRefs.current[i] = el}
+                  className={`stop-item border rounded-xl px-3 py-2.5 mb-1 transition-all ${
+                    draggingIdx === i ? 'opacity-40 scale-95 bg-blue-50 border-blue-300' :
+                    dragOverIdxState === i && draggingIdx !== null ? 'border-blue-400 border-2 bg-blue-50' :
+                    'bg-white border-slate-200'
+                  }`}
+                  draggable onDragStart={()=>onDragStart(i)} onDragOver={e=>onDragOver(e,i)} onDrop={e=>onDrop(e,i)} onDragEnd={onDragEnd}
+                >
                 <div className="flex items-start gap-2">
-                  {/* ドラッグハンドル（PC＆スマホ共通） */}
+                  {/* ドラッグハンドル（枠付き） */}
                   <div
-                    className="w-6 flex-shrink-0 flex flex-col items-center justify-center gap-0.5 pt-1.5 cursor-grab active:cursor-grabbing touch-none select-none"
+                    className="drag-box"
                     onTouchStart={e=>onHandleTouchStart(e,i)}
                     onTouchMove={onHandleTouchMove}
                     onTouchEnd={onHandleTouchEnd}
                   >
-                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
-                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
-                    <span className="block w-4 h-0.5 bg-slate-300 rounded"></span>
-                  </div>
-                  <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 mt-0.5">
-                    {i+1}
+                    <span></span>
+                    <span></span>
+                    <span></span>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-slate-800 text-sm leading-tight">{s.districtName}</div>
                     <div className="text-xs text-slate-400 truncate">{s.address.slice(0,32)}</div>
                   </div>
-                  <div className="flex flex-shrink-0">
-                    <button onClick={()=>setFavMemoModal(s)} title="お気に入り登録"
-                      className="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-yellow-400 active:text-yellow-500 text-lg">☆</button>
-                    <button onClick={()=>removeStop(i)} title="削除"
-                      className="w-9 h-9 flex items-center justify-center text-slate-300 active:text-red-500 text-xl">×</button>
+                  <div className="flex flex-shrink-0 gap-1.5">
+                    <button onClick={()=>setFavMemoModal(s)} className="act-btn act-btn-fav">★ お気に入り</button>
+                    <button onClick={()=>removeStop(i)} className="act-btn act-btn-del">✕ 削除</button>
                   </div>
                 </div>
                 {displayLegDist(i) > 0 && (
@@ -2313,7 +2312,8 @@ function App({ user, onLogout }) {
                     )}
                   </div>
                 )}
-              </div>
+                </div>{/* /stop-item */}
+              </div>{/* /tl-node */}
             ))}
 
             {/* リスト末尾の追加ゾーン */}
