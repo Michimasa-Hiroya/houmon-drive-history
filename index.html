@@ -2060,6 +2060,7 @@ function App({ user, onLogout }) {
       return r;
     });
     if (mapRef.current) mapRef.current.setView([newBase.lat, newBase.lng], 14);
+    setMapMode("stop");
   };
 
   const displayLegDist = i => routeData.legDists[i] || rec.stops[i]?.distanceFromPrev || 0;
